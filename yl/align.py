@@ -24,11 +24,15 @@ def stems(folder):
 
 def vocals_16k(folder, cache):
     """Gera cache/vocals16k.wav. Usa stem 'vocals' se existir; senão Demucs no mix completo."""
-    out = os.path.join(cache, 'vocals16k.wav')
+    ignore_stem = os.environ.get('YL_IGNORE_VOCAL_STEM') == '1'   # simula músicas sem stem de voz
+    out = os.path.join(cache, 'vocals16k_mix.wav' if ignore_stem else 'vocals16k.wav')
     if os.path.exists(out):
         return out, 'cache'
     all_stems = stems(folder)
-    voc = [p for p in all_stems if os.path.basename(p).lower().startswith('vocals')]
+    big = max((os.path.getsize(p) for p in all_stems), default=0)
+    # stems de voz minúsculos (ex.: vocals_2.ogg de 23 KB, quase silêncio) não contam como voz
+    voc = [] if ignore_stem else [p for p in all_stems if os.path.basename(p).lower().startswith('vocals')
+                                  and os.path.getsize(p) >= 0.2 * big]
     if voc:
         _ffmpeg_decode(voc, out, SR, True)
         return out, 'stem'
@@ -74,7 +78,31 @@ def emission(wav_path, chunk_s=30, ctx_s=2):
             out.append(em[f0:min(f1, em.shape[0])])
             s = e
     em = torch.cat(out)
-    return em, n / SR / em.shape[0], n / SR
+    ratio = n / SR / em.shape[0]
+    _voice_stats(em, wav.numpy(), ratio)
+    return em, ratio, n / SR
+
+# ---------------------------------------------------------------- atividade vocal
+LAST_STATS = {}
+
+def _voice_stats(em, wav, ratio):
+    # fração de janelas de 1 s com fala/canto (pelo CTC) e com energia no stem de voz
+    pb = torch.softmax(em.float(), -1)[:, 0].numpy()
+    win = max(1, int(round(1.0 / ratio)))
+    nw = len(pb) // win
+    mx = (1 - pb[:nw * win]).reshape(nw, win).max(1) if nw else np.zeros(1)
+    ch = SR // 2
+    nc = len(wav) // ch
+    rms = np.sqrt((wav[:nc * ch].reshape(nc, ch) ** 2).mean(1)) if nc else np.zeros(1)
+    db = 20 * np.log10(rms + 1e-9)
+    g = em[:, :-1].argmax(-1).numpy()                      # exclui o '*' (última classe)
+    voiced = g != 0
+    cnt = voiced[:nw * win].reshape(nw, win).sum(1) if nw else np.zeros(1)
+    LAST_STATS.clear()
+    LAST_STATS.update(chars_per_s=round(float(voiced.sum() / max(1, len(g)) / ratio), 2),
+                      voiced_win_frac=round(float((cnt >= 2).mean()), 3))
+    LAST_STATS.update(speech_win_frac=round(float((mx > 0.5).mean()), 3),
+                      vocal_rms_frac=round(float((db > -40).mean()), 3))
 
 # ---------------------------------------------------------------- texto
 _dict = _bundle.get_dict(star='*')
@@ -348,16 +376,29 @@ def quality(phrases, delay):
     q['median_line_score'] = round(float(np.median(ls)), 3) if ls else 0.0
     return q
 
-# limiares calibrados em 17 músicas (6 pt + 11 en) com letra de referência — ver tools/calibrate.py
-# Pegou todas as claramente ruins (>15% das palavras com erro >1 s); falsos positivos aceitáveis.
-VERDICT = {'max_lrc_disagree_frac': 0.40, 'min_mean_score': 0.10, 'max_duration_delta_s': 8.0}
+# Veredito calibrado em 47 músicas (11 pt/it + 36 en, voz separada pelo Demucs no mix).
+# Pega todas as claramente ruins (>30% das palavras com erro >1 s). Diferença de duração no LRCLIB,
+# sozinha, não condena: só conta junto com desencontro de linhas ou confiança baixa.
+VERDICT = {'max_lrc_disagree_frac': 0.40, 'min_mean_score': 0.085,
+           'max_duration_delta_s': 8.0, 'dd_disagree_frac': 0.25, 'dd_mean_score': 0.12}
 
 def verdict(rep):
-    q = rep.get('quality', {})
-    if rep.get('lrclib') and rep['lrclib']['duration_delta_s'] > VERDICT['max_duration_delta_s']:
+    q, V = rep.get('quality', {}), VERDICT
+    d, m = q.get('lrc_disagree_frac', 0), q.get('mean_score', 0)
+    dd = (rep.get('lrclib') or {}).get('duration_delta_s', 0)
+    if d > V['max_lrc_disagree_frac'] or m < V['min_mean_score']:
         return 'REVISAR'
-    if q.get('lrc_disagree_frac', 0) > VERDICT['max_lrc_disagree_frac']:
-        return 'REVISAR'
-    if q.get('mean_score', 0) < VERDICT['min_mean_score']:
+    if dd > V['max_duration_delta_s'] and (d > V['dd_disagree_frac'] or m < V['dd_mean_score']):
         return 'REVISAR'
     return 'ok'
+
+# instrumental: quase nada de energia no stem de voz, ou quase nenhum caractere reconhecido
+# (provisório; calibrado com instrumentais do GH3 — tools/voice_stats.py)
+INSTRUMENTAL = {'max_vocal_rms_frac': 0.30, 'max_chars_per_s': 0.5, 'max_voiced_win_frac': 0.15}
+
+def is_instrumental(q):
+    T = INSTRUMENTAL
+    if 'vocal_rms_frac' not in q:
+        return False
+    return q['vocal_rms_frac'] < T['max_vocal_rms_frac'] or \
+        (q.get('chars_per_s', 9) < T['max_chars_per_s'] and q.get('voiced_win_frac', 1) < T['max_voiced_win_frac'])

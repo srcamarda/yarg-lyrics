@@ -52,7 +52,7 @@ def process(folder, do_eval=False, force=False):
     ch = charts.open_chart(folder)
     artist, title = ini.get('artist', ''), ini.get('name', '')
     rep = {'folder': folder, 'artist': artist, 'title': title, 'format': ch.kind}
-    if ch.has_lyrics() and not do_eval and not force:
+    if ch.has_lyrics() and not do_eval:
         rep['status'] = 'skip: já tem letra'
         return rep
     rec = lyrics.fetch(artist, title, song_len_s(ini), os.path.join(cd, 'lrclib.json'))
@@ -62,10 +62,10 @@ def process(folder, do_eval=False, force=False):
         if os.path.exists(local):
             lines, src = lyrics.parse_lrc(open(local, encoding='utf-8').read()), 'local'
     if not lines:
-        rep['status'] = 'sem letra (LRCLIB vazio e sem lyrics.txt)'
+        rep['status'] = 'instrumental (LRCLIB)' if rec and rec.get('instrumental') else 'sem letra (LRCLIB vazio e sem lyrics.txt)'
         return rep
     rep['lyrics_source'] = src
-    if rec:
+    if rec and not rec.get('instrumental'):
         rep['lrclib'] = {'id': rec['id'], 'duration_delta_s': rec['duration_delta']}
     lang = (ini.get('lang') or lyrics.guess_lang(lines))[:2]
     rep['lang'] = lang
@@ -80,6 +80,15 @@ def process(folder, do_eval=False, force=False):
     delay = charts.audio_delay(folder, ch)
     phrases = align.finalize(raw, delay)
     rep['quality'] = align.quality(phrases, delay)
+    rep['quality'].update(align.LAST_STATS)
+    if not do_eval and align.is_instrumental(rep['quality']):
+        from yl import batch
+        stale = batch.generated(folder)
+        if stale:
+            os.remove(stale)
+        rep['status'] = 'instrumental (sem voz no áudio)'
+        rep['seconds'] = round(time.time() - t0, 1)
+        return rep
     rep['phrases'] = len(phrases)
     rep['words'] = sum(len(p['words']) for p in phrases)
     json.dump(phrases, open(os.path.join(cd, 'aligned.json'), 'w', encoding='utf-8'), ensure_ascii=False)

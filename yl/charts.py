@@ -132,8 +132,9 @@ PHRASE_NOTE = 105
 class Midi:
     kind = 'mid'
     def __init__(self, path):
+        from yl import midifix
         self.path = path
-        self.mid = mido.MidiFile(path, charset='cp1252', clip=True)
+        self.mid, self.raw, self.hdr, self.vi = midifix.read(path, VOCAL_TRACK)
         tempos, abs_t = [], 0
         for msg in self.mid.tracks[0]:
             abs_t += msg.time
@@ -143,10 +144,9 @@ class Midi:
         self.offset = 0.0
 
     def _vocal(self):
-        for tr in self.mid.tracks:
-            if any(m.type == 'track_name' and m.name.strip().upper() == VOCAL_TRACK for m in tr):
-                return tr
-        return None
+        if self.vi is None or len(self.mid.tracks) < 2:
+            return None
+        return self.mid.tracks[1]
 
     def read_lyrics(self):
         tr = self._vocal()
@@ -167,6 +167,8 @@ class Midi:
         return bool(self.read_lyrics()[0])
 
     def write_lyrics(self, phrases, out_path):
+        """Grava cópia do MIDI original trocando só a PART VOCALS (demais trilhas byte a byte)."""
+        from yl import midifix
         evs = [(0, 0, mido.MetaMessage('track_name', name=VOCAL_TRACK))]
         for ph in phrases:
             evs.append((self.tmap.s2t(ph['start']), 1, mido.Message('note_on', note=PHRASE_NOTE, velocity=100)))
@@ -178,10 +180,8 @@ class Midi:
         for t, _, m in evs:
             tr.append(m.copy(time=t - last)); last = t
         tr.append(mido.MetaMessage('end_of_track', time=0))
-        old = self._vocal()
-        out = mido.MidiFile(type=1, ticks_per_beat=self.mid.ticks_per_beat, charset='cp1252')
-        out.tracks.extend([x for x in self.mid.tracks if x is not old] + [tr])
-        out.save(out_path)
+        chunk = midifix.track_bytes(tr, self.mid.ticks_per_beat)
+        midifix.write(out_path, self.hdr, self.raw, self.vi, chunk)
 
 def open_chart(folder):
     files = {f.lower(): f for f in os.listdir(folder)}

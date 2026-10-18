@@ -3,7 +3,7 @@ import re, json, os, time, unicodedata
 import requests
 
 API = 'https://lrclib.net/api'
-UA = {'User-Agent': 'yarg-lyrics/0.1 (https://github.com/)'}
+UA = {'User-Agent': 'yarg-lyrics/0.2 (https://github.com/)'}
 
 def _norm(s):
     s = unicodedata.normalize('NFD', s or '')
@@ -11,42 +11,89 @@ def _norm(s):
     s = re.sub(r'\(.*?\)|\[.*?\]', ' ', s)
     return re.sub(r'[^a-z0-9]+', ' ', s).strip()
 
+# parênteses/colchetes com marcações de versão: "(Co-op)", "(Live at Brixton)", "(RB3 version)", "(Remix)"...
+SUFFIX_RE = re.compile(r'\s*[\(\[][^)\]]*\b(?:co-?op|live|ao vivo|version|vers[aã]o|remaster(?:ed)?|demo|edit|'
+                       r'mix|remix|cover|feat\.?|ft\.?|bonus|acoustic|ac[uú]stico|master|rerecord(?:ed)?)\b[^)\]]*[\)\]]',
+                       re.I)
+
 def clean_title(t):
-    t = re.sub(r'\((ao vivo|live|rb3 version|.*version.*)\)', '', t, flags=re.I)
-    return re.sub(r'\s+', ' ', t).strip(' .')
+    t = SUFFIX_RE.sub('', t or '')
+    t = re.sub(r'\s+(?:[A-Z]\.){2}$', '', t)                 # GH3: "Suicide & Redemption J.H." / "K.H."
+    t = re.sub(r'\s+-\s+(?:live|ao vivo)\b.*$', '', t, flags=re.I)
+    return re.sub(r'\s+', ' ', t).strip(' .-')
 
 def clean_artist(a):
-    return re.sub(r'\s*\(.*?\)', '', a).strip()
+    a = re.sub(r'\s*\(.*?\)', '', a or '')
+    a = re.sub(r'\s+(?:feat\.?|ft\.?|featuring)\s.*$', '', a, flags=re.I)
+    return a.strip()
 
-def fetch(artist, title, duration_s, cache_path=None):
-    """Retorna o registro LRCLIB mais provável (dict) ou None. Prefere synced e duração próxima."""
-    if cache_path and os.path.exists(cache_path):
-        return json.load(open(cache_path, encoding='utf-8'))
-    a, t = clean_artist(artist), clean_title(title)
-    cands, answered = [], False
-    for params in ({'artist_name': a, 'track_name': t}, {'q': f'{a} {t}'}):
+def _variants(a, t):
+    out = []
+    def add(x, y):
+        if y and (x, y) not in out:
+            out.append((x, y))
+    add(a, t)
+    add(a, t.replace('&', 'and'))
+    add(a, re.sub(r'\s+and\s+', ' & ', t, flags=re.I))
+    add(a, re.sub(r'\s*\(.*?\)\s*', ' ', t).strip())
+    add(a[4:] if a.lower().startswith('the ') else 'The ' + a, t)
+    return out
+
+def _search(params):
+    """Lista de resultados, [] se o LRCLIB respondeu vazio, None se não respondeu (rede/limite)."""
+    for i in range(4):
         try:
             r = requests.get(f'{API}/search', params=params, headers=UA, timeout=20)
-            if r.status_code == 429:
-                time.sleep(3); r = requests.get(f'{API}/search', params=params, headers=UA, timeout=20)
-            if r.ok and isinstance(r.json(), list):
-                answered = True
-                cands = r.json()
         except requests.RequestException:
-            pass
-        if cands:
-            break
+            time.sleep(2 * (i + 1)); continue
+        if r.status_code == 429 or r.status_code >= 500:
+            time.sleep(4 * (i + 1)); continue
+        if r.ok:
+            try:
+                j = r.json()
+            except ValueError:
+                return None
+            return j if isinstance(j, list) else None
+        return None
+    return None
+
+def _artist_ok(cand, a):
+    ca, na = set(_norm(cand.get('artistName')).split()), set(_norm(a).split()) - {'the'}
+    return not na or bool(ca & na)
+
+def fetch(artist, title, duration_s, cache_path=None):
+    """Registro LRCLIB mais provável (dict), {'instrumental': True} ou None."""
+    if cache_path and os.path.exists(cache_path):
+        rec = json.load(open(cache_path, encoding='utf-8'))
+        if rec:                       # vazio em cache é tentado de novo (a busca pode ter melhorado)
+            return rec
+    a, t = clean_artist(artist), clean_title(title)
+    if not a and ' - ' in t:
+        a, t = [x.strip() for x in t.split(' - ', 1)]
+    cands, answered = [], False
+    for va, vt in _variants(a, t):
+        res = _search({'artist_name': va, 'track_name': vt})
+        answered |= res is not None
+        if res:
+            cands = res; break
+        time.sleep(0.3)
+    if not cands:
+        res = _search({'q': f'{a} {t}'})
+        answered |= res is not None
+        cands = [c for c in (res or []) if _artist_ok(c, a)]
     def score(c):
         dd = abs((c.get('duration') or 0) - duration_s)
         same_title = _norm(c.get('trackName')) == _norm(t)
         return (0 if c.get('syncedLyrics') else 1, 0 if same_title else 1, dd)
-    cands = [c for c in cands if not c.get('instrumental')]
-    best = min(cands, key=score) if cands else None
+    vocal = [c for c in cands if not c.get('instrumental')]
     rec = None
-    if best:
+    if vocal:
+        best = min(vocal, key=score)
         rec = {k: best.get(k) for k in ('id', 'trackName', 'artistName', 'albumName', 'duration',
                                         'syncedLyrics', 'plainLyrics')}
         rec['duration_delta'] = round(abs((best.get('duration') or 0) - duration_s), 1)
+    elif cands:
+        rec = {'instrumental': True, 'id': cands[0].get('id'), 'duration_delta': 0}
     if cache_path and (answered or rec):
         json.dump(rec, open(cache_path, 'w', encoding='utf-8'), ensure_ascii=False)
     return rec
