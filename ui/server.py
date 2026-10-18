@@ -74,6 +74,7 @@ def song_info(folder):
     rep = s.get('report') or {}
     info['report'] = {k: rep.get(k) for k in REPORT_KEYS}
     info['approved'] = s.get('approved', False)
+    info['edited'] = s.get('edited', False)
     info['state'] = derive_state(info)
     return info
 
@@ -149,6 +150,7 @@ def worker(items, force):
                 if not str(r.get('status', '')).startswith('skip'):
                     s['report'] = r
                     s['approved'] = False
+                    s['edited'] = False
             save_state()
             JOB['done'] += 1
             JOB['log'].append({'folder': f, 'name': os.path.basename(f), 'status': r.get('status')})
@@ -265,6 +267,40 @@ def review(folder: str):
     cd = pipeline.cache_dir(folder)
     has_voc = any(os.path.exists(os.path.join(cd, n)) for n in ('vocals16k.wav', 'vocals16k_mix.wav'))
     return {'source': os.path.basename(path), 'phrases': phrases, 'has_vocals': has_voc, 'info': song_info(folder)}
+
+@app.post('/api/adjust')
+def adjust(folder: str = Body(..., embed=True), phrases: list = Body(..., embed=True)):
+    """Salva ajustes manuais de tempo (frases/palavras em tempo de áudio) no chart gerado ou aplicado."""
+    info = song_info(folder)
+    if info['state'] == 'tem letra':
+        raise HTTPException(400, 'Esta música já vinha com letra oficial; ajustes só valem para letras geradas aqui')
+    gen = batch.generated(folder)
+    base = charts.open_chart(folder)                 # original (ou o .bak, se já aplicada)
+    delay = charts.audio_delay(folder, base)
+    out = []
+    for ph in phrases:
+        ws = [{'t': float(w['t']) - delay, 'text': w['text']} for w in ph['words'] if str(w.get('text', '')).strip()]
+        if ws:
+            out.append({'start': float(ph.get('start', ws[0]['t'] + delay)) - delay,
+                        'end': float(ph.get('end', ws[-1]['t'] + delay + 0.5)) - delay, 'words': ws})
+    out.sort(key=lambda p: p['words'][0]['t'])
+    align.fix_bounds(out, gap=0.02)
+    if gen:
+        target = gen
+    else:
+        files = {f.lower(): f for f in os.listdir(folder)}
+        name = 'notes.chart' if base.kind == 'chart' else 'notes.mid'
+        target = os.path.join(folder, files.get(name, name))
+        if not os.path.exists(target + '.bak'):
+            import shutil
+            shutil.copy2(target, target + '.bak')
+    base.write_lyrics(out, target)
+    json.dump(out, open(os.path.join(pipeline.cache_dir(folder), 'aligned.json'), 'w', encoding='utf-8'),
+              ensure_ascii=False)
+    with lock:
+        STATE.setdefault(_key(folder), {})['edited'] = True
+    save_state()
+    return {'saved': os.path.basename(target), 'phrases': len(out)}
 
 def _preview_mix(folder):
     """Mix de todos os stems num .ogg em cache (para tocar no navegador)."""

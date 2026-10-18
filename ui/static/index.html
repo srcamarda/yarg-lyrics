@@ -64,6 +64,7 @@
   </div>
 
   <aside class="review" id="review" hidden aria-label="Revisão">
+    <div class="grip" id="grip" title="Arraste para redimensionar" aria-hidden="true"></div>
     <div class="rhead">
       <div>
         <div class="rtitle" id="rTitle"></div>
@@ -90,7 +91,37 @@
       </div>
       <audio id="audio" preload="auto"></audio>
     </div>
-    <p class="hint muted">Espaço toca/pausa · ← → voltam/avançam 5 s · clique numa frase para pular até ela</p>
+    <p class="hint muted">Espaço toca/pausa · ← → 5 s · clique numa palavra para selecioná-la (e a linha) · R ouve a linha de novo</p>
+
+    <section class="tune" id="tune" aria-label="Ajustes de tempo">
+      <div class="tunehead">
+        <h3>Ajustar tempo</h3>
+        <div class="steps" role="radiogroup" aria-label="Passo">
+          <button class="seg" data-step="10">10 ms</button><button class="seg on" data-step="50">50 ms</button><button class="seg" data-step="100">100 ms</button><button class="seg" data-step="250">250 ms</button>
+        </div>
+      </div>
+      <div class="tunerow">
+        <span class="tlabel">Linha <b id="selLine">—</b></span>
+        <button data-shift="line" data-dir="-1" title="Antecipar a linha ( [ )">− antes</button>
+        <button data-shift="line" data-dir="1" title="Atrasar a linha ( ] )">depois +</button>
+        <button id="replay" class="ghost" title="Ouvir a linha de novo (R)">Ouvir linha</button>
+      </div>
+      <div class="tunerow">
+        <span class="tlabel">Palavra <b id="selWord">—</b></span>
+        <button data-shift="word" data-dir="-1" title="Antecipar a palavra ( , )">− antes</button>
+        <button data-shift="word" data-dir="1" title="Atrasar a palavra ( . )">depois +</button>
+      </div>
+      <div class="tunerow">
+        <span class="tlabel">Música inteira</span>
+        <button data-shift="all" data-dir="-1">− antes</button>
+        <button data-shift="all" data-dir="1">depois +</button>
+      </div>
+      <div class="tunerow save">
+        <span id="dirty" class="muted">Sem alterações</span>
+        <button id="undo" class="ghost" disabled title="Ctrl+Z">Desfazer</button>
+        <button id="saveAdj" class="go" disabled>Salvar ajustes</button>
+      </div>
+    </section>
 
     <dl class="stats" id="rStats"></dl>
 

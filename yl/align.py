@@ -165,24 +165,43 @@ def align(lines, wav_path, lang):
         phrases.append({'lrc_t': l['t'], 'words': words})
     return phrases, dur
 
-def finalize(phrases, delay):
-    """Converte p/ tempo de chart e define início/fim de frase sem sobreposição."""
-    out = []
-    for i, ph in enumerate(phrases):
-        ws = [{'t': w['t'] - delay, 'text': w['text'], 'end': w['end'] - delay, 'score': w['score']}
-              for w in ph['words']]
-        for j in range(1, len(ws)):            # garante ordem estrita
-            ws[j]['t'] = max(ws[j]['t'], ws[j - 1]['t'] + 0.02)
-        out.append({'start': ws[0]['t'] - 0.15, 'end': max(w['end'] for w in ws) + 0.25,
-                    'words': ws, 'lrc_t': ph['lrc_t']})
+def fix_bounds(out, gap=0.05):
+    """Garante palavras em ordem (também entre frases) e frases que sempre contêm as próprias palavras.
+
+    Se o alinhador pôs a 1ª palavra de uma linha antes da última da linha anterior, ela é empurrada
+    para logo depois; o fim de cada frase nunca passa do início da seguinte.
+    """
+    last = None
+    for ph in out:
+        for w in ph['words']:
+            if last is not None and w['t'] < last + gap:
+                w['t'] = last + gap
+            w['end'] = max(w.get('end') or w['t'] + 0.1, w['t'] + 0.05)
+            last = w['t']
+    for k, ph in enumerate(out):
+        ws = ph['words']
+        ph['start'] = min(ph.get('start', ws[0]['t'] - 0.15), ws[0]['t'] - 0.01)
+        ph['end'] = max(ph.get('end', ws[-1]['end'] + 0.25), ws[-1]['t'] + 0.05)
     for a, b in zip(out, out[1:]):
         if a['end'] > b['start'] - 0.02:
-            mid = (a['words'][-1]['end'] + b['words'][0]['t']) / 2
-            a['end'] = max(a['words'][-1]['t'] + 0.05, min(a['end'], mid))
-            b['start'] = max(a['end'] + 0.01, min(b['start'], b['words'][0]['t'] - 0.01))
+            fa, lb = a['words'][-1]['t'], b['words'][0]['t']
+            cut = max(fa + 0.03, min(a['end'], (a['words'][-1]['end'] + lb) / 2, lb - 0.03))
+            a['end'] = min(cut, lb - 0.02)
+            b['start'] = max(a['end'] + 0.01, min(b['start'], lb - 0.01))
+            b['start'] = min(b['start'], lb - 0.005)
     for ph in out:
         ph['start'] = max(0.0, ph['start'])
     return out
+
+def finalize(phrases, delay):
+    """Converte p/ tempo de chart e define início/fim de frase sem sobreposição."""
+    out = []
+    for ph in phrases:
+        ws = [{'t': w['t'] - delay, 'text': w['text'], 'end': w['end'] - delay, 'score': w['score']}
+              for w in ph['words']]
+        out.append({'start': ws[0]['t'] - 0.15, 'end': max(w['end'] for w in ws) + 0.25,
+                    'words': ws, 'lrc_t': ph['lrc_t']})
+    return fix_bounds(out)
 
 def quality(phrases, delay):
     sc = [w['score'] for p in phrases for w in p['words'] if w['score'] is not None]
@@ -246,6 +265,7 @@ def align_anchored(lines, wav_path, lang, pre=1.2, post=0.8):
 
 def _align_lines(lines, em, ratio, dur, T, off, lang, tokenizer, aligner, pre, post):
     phrases = []
+    prev_end = 0.0
     for li, l in enumerate(lines):
         t0 = l['t'] + off - pre
         t1 = (lines[li + 1]['t'] + off + post) if li + 1 < len(lines) else min(dur, l['t'] + off + 12)
@@ -257,6 +277,7 @@ def _align_lines(lines, em, ratio, dur, T, off, lang, tokenizer, aligner, pre, p
         if not toks:
             continue
         need = sum(len(x) for x in toks) * 2 + 4
+        t0 = max(t0, prev_end + 0.02)          # não reaproveita o áudio da linha anterior
         f0, f1 = max(0, int(t0 / ratio)), min(T, int(t1 / ratio))
         if f1 - f0 < need:
             f1 = min(T, f0 + need)
@@ -278,6 +299,7 @@ def _align_lines(lines, em, ratio, dur, T, off, lang, tokenizer, aligner, pre, p
                 else:
                     w['t'] = words[prv]['end'] if prv is not None else words[nxt]['t'] - 0.1
                 w['end'] = w['t'] + 0.1
+        prev_end = max(prev_end, max(w['end'] for w in words if w['end'] is not None))
         phrases.append({'lrc_t': l['t'] + off, 'words': words, 'li': li})
     return phrases
 

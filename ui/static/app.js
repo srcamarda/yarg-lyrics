@@ -188,9 +188,11 @@ async function refresh(folders) {
 
 // ------------------------------------------------------------------ revisão
 const A = $('audio');
-const R = { data: null, cur: -2, kind: 'mix', raf: 0 };
+const R = { data: null, cur: -2, kind: 'mix', raf: 0, sel: null, step: 50, undo: [], dirty: false };
 
 async function openReview(folder, keepAudio) {
+  if (R.dirty && folder !== S.active && !confirm('Há ajustes de tempo não salvos nesta música. Descartar?')) return;
+  if (folder !== S.active || !keepAudio) { R.sel = null; R.undo = []; setDirty(false); }
   S.active = folder; render();
   const s = S.songs.find((x) => x.folder === folder);
   $('review').hidden = false;
@@ -208,7 +210,8 @@ async function openReview(folder, keepAudio) {
   }
   document.querySelector('.seg[data-kind="vocals"]').disabled = !(R.data && R.data.has_vocals);
   if (!keepAudio || !A.src) setAudio(R.kind === 'vocals' && R.data && R.data.has_vocals ? 'vocals' : 'mix', 0);
-  drawMarks(); drawLines();
+  $('tune').hidden = !(R.data && R.data.phrases.length) || s.state === 'tem letra';
+  drawMarks(); drawLines(); showSel();
 }
 
 function renderStats(s) {
@@ -272,7 +275,9 @@ function phraseAt(t) {
 }
 function lineHTML(p, idx) {
   if (!p) return '';
-  return `<span data-i="${idx}">` + p.words.map((w, j) => `<span class="w" data-j="${j}">${esc(w.text)}</span>`).join(' ') + '</span>';
+  const sl = R.sel && R.sel.i === idx;
+  return `<span data-i="${idx}"${sl ? ' class="selline"' : ''}>` + p.words.map((w, j) =>
+    `<span class="w${sl && R.sel.j === j ? ' sel' : ''}" data-j="${j}">${esc(w.text)}</span>`).join(' ') + '</span>';
 }
 function drawLines() {
   const P = R.data ? R.data.phrases : [], i = R.cur;
@@ -301,15 +306,107 @@ function tick() { update(); if (!A.paused) R.raf = requestAnimationFrame(tick); 
 A.addEventListener('seeked', update);
 $('stage').addEventListener('click', (e) => {
   const s = e.target.closest('[data-i]'); if (!s || !R.data) return;
-  const p = R.data.phrases[+s.dataset.i]; if (p) { A.currentTime = Math.max(0, p.start - 0.6); update(); if (A.paused) A.play(); }
+  const i = +s.dataset.i, p = R.data.phrases[i]; if (!p) return;
+  const w = e.target.closest('.w');
+  R.sel = { i, j: w ? +w.dataset.j : 0 };
+  A.currentTime = Math.max(0, p.start - 0.6); R.cur = -2; update(); showSel();
 });
+function showSel() {
+  const P = R.data ? R.data.phrases : [];
+  $('selLine').textContent = R.sel && P[R.sel.i] ? `${R.sel.i + 1} de ${P.length}` : '— clique numa palavra';
+  $('selWord').textContent = R.sel && P[R.sel.i] ? `${R.sel.j + 1} de ${P[R.sel.i].words.length}` : '—';
+  document.querySelectorAll('[data-shift="line"],[data-shift="word"],#replay').forEach((b) => { b.disabled = !R.sel; });
+}
+
+// ------------------------------------------------------------------ ajustes de tempo
+function setDirty(on) {
+  R.dirty = on;
+  $('dirty').textContent = on ? 'Alterações não salvas' : 'Sem alterações';
+  $('dirty').classList.toggle('on', on);
+  $('saveAdj').disabled = !on; $('undo').disabled = !R.undo.length;
+}
+const snap = () => JSON.stringify(R.data.phrases);
+function shift(kind, dir) {
+  if (!R.data || (kind !== 'all' && !R.sel)) return;
+  const P = R.data.phrases, d = dir * R.step / 1000;
+  const before = snap();
+  const allWords = () => P.flatMap((p) => p.words);
+  if (kind === 'all') {
+    const first = P[0].words[0].t, delta = Math.max(d, -first + 0.05);
+    P.forEach((p) => { p.start = Math.max(0, p.start + delta); p.end += delta; p.words.forEach((w) => { w.t += delta; }); });
+  } else if (kind === 'line') {
+    const i = R.sel.i, p = P[i];
+    const lo = i > 0 ? P[i - 1].words[P[i - 1].words.length - 1].t + 0.03 : 0.05;
+    const hi = i < P.length - 1 ? P[i + 1].words[0].t - 0.03 : Infinity;
+    let delta = d;
+    if (p.words[0].t + delta < lo) delta = lo - p.words[0].t;
+    if (p.words[p.words.length - 1].t + delta > hi) delta = hi - p.words[p.words.length - 1].t;
+    if (Math.abs(delta) < 1e-4) { toast('A linha já encostou na vizinha'); return; }
+    p.words.forEach((w) => { w.t += delta; }); p.start = Math.max(0, p.start + delta); p.end += delta;
+  } else {
+    const ws = allWords(), p = P[R.sel.i], w = p.words[R.sel.j], k = ws.indexOf(w);
+    const lo = k > 0 ? ws[k - 1].t + 0.03 : 0.05, hi = k < ws.length - 1 ? ws[k + 1].t - 0.03 : Infinity;
+    const nt = Math.min(hi, Math.max(lo, w.t + d));
+    if (Math.abs(nt - w.t) < 1e-4) { toast('A palavra já encostou na vizinha'); return; }
+    w.t = nt;
+    p.start = Math.min(p.start, p.words[0].t - 0.01); p.end = Math.max(p.end, p.words[p.words.length - 1].t + 0.05);
+  }
+  // frases nunca se sobrepõem e sempre contêm as próprias palavras
+  for (let i = 0; i < P.length - 1; i++) {
+    const a = P[i], b = P[i + 1];
+    if (a.end > b.start - 0.02) { a.end = Math.max(a.words[a.words.length - 1].t + 0.03, b.words[0].t - 0.02); b.start = Math.min(b.words[0].t - 0.01, a.end + 0.01); }
+  }
+  R.undo.push(before); if (R.undo.length > 200) R.undo.shift();
+  setDirty(true); R.cur = -2; update(); drawMarks();
+}
+document.querySelector('.tune').addEventListener('click', (e) => {
+  const b = e.target.closest('button'); if (!b) return;
+  if (b.dataset.step) {
+    R.step = +b.dataset.step;
+    document.querySelectorAll('.steps .seg').forEach((x) => x.classList.toggle('on', x === b));
+  } else if (b.dataset.shift) shift(b.dataset.shift, +b.dataset.dir);
+});
+function replayLine() {
+  if (!R.sel || !R.data) return;
+  A.currentTime = Math.max(0, R.data.phrases[R.sel.i].start - 0.8); update(); A.play();
+}
+$('replay').addEventListener('click', replayLine);
+$('undo').addEventListener('click', () => {
+  if (!R.undo.length) return;
+  R.data.phrases = JSON.parse(R.undo.pop()); setDirty(R.undo.length > 0); R.cur = -2; update(); drawMarks();
+});
+$('saveAdj').addEventListener('click', async () => {
+  try {
+    const d = await api('/api/adjust', { folder: S.active, phrases: R.data.phrases });
+    R.undo = []; setDirty(false); toast(`Ajustes salvos em ${d.saved}`); refresh([S.active]);
+  } catch (e) { toast('Não deu para salvar: ' + e.message); }
+});
+window.addEventListener('beforeunload', (e) => { if (R.dirty) { e.preventDefault(); e.returnValue = ''; } });
+
+// painel redimensionável
+(() => {
+  const g = $('grip'), rv = $('review');
+  const w0 = +store.get('yl.rw'); if (w0) rv.style.setProperty('--rw', w0 + 'px');
+  g.addEventListener('pointerdown', (e) => {
+    g.setPointerCapture(e.pointerId); g.classList.add('drag');
+    const move = (ev) => { const w = Math.min(window.innerWidth * 0.72, Math.max(380, window.innerWidth - ev.clientX)); rv.style.setProperty('--rw', w + 'px'); };
+    const up = () => { g.classList.remove('drag'); g.removeEventListener('pointermove', move); store.set('yl.rw', parseInt(rv.style.getPropertyValue('--rw'), 10)); };
+    g.addEventListener('pointermove', move); g.addEventListener('pointerup', up, { once: true });
+  });
+})();
 document.addEventListener('keydown', (e) => {
   if (!S.active || $('editor').open || /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName)) return;
   if (e.code === 'Space') { e.preventDefault(); A.paused ? A.play() : A.pause(); }
   else if (e.code === 'ArrowLeft') { A.currentTime = Math.max(0, A.currentTime - 5); update(); }
   else if (e.code === 'ArrowRight') { A.currentTime = Math.min(A.duration || 0, A.currentTime + 5); update(); }
+  else if (e.key === '[') shift('line', -1);
+  else if (e.key === ']') shift('line', 1);
+  else if (e.key === ',') shift('word', -1);
+  else if (e.key === '.') shift('word', 1);
+  else if (e.key === 'r' || e.key === 'R') replayLine();
+  else if ((e.ctrlKey || e.metaKey) && e.key === 'z') { e.preventDefault(); $('undo').click(); }
 });
-$('rClose').addEventListener('click', () => { A.pause(); $('review').hidden = true; S.active = null; render(); });
+$('rClose').addEventListener('click', () => { if (R.dirty && !confirm('Há ajustes de tempo não salvos. Descartar?')) return; setDirty(false); R.undo = []; A.pause(); $('review').hidden = true; S.active = null; render(); });
 
 // ações da revisão
 $('rApprove').addEventListener('click', async () => { await api('/api/approve', { folder: S.active, value: true }); toast('Marcada como ok'); refresh([S.active]); });
