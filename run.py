@@ -97,21 +97,45 @@ def process(folder, do_eval=False, force=False):
     return rep
 
 if __name__ == '__main__':
+    from yl import batch
     args = sys.argv[1:]
-    do_eval, force = '--eval' in args, '--force' in args
+    flag = lambda f: f in args
+    def opt(name):
+        return [args[i + 1] for i, a in enumerate(args) if a == name and i + 1 < len(args)]
+    do_eval, force, do_apply = flag('--eval'), flag('--force'), flag('--apply')
+    if flag('--restore'):
+        for root in opt('--scan') + [a for a in args if not a.startswith('--') and a not in opt('--scan')]:
+            n = sum(batch.restore(f) for f in batch.find_songs(root))
+            print(f'restaurados: {n}')
+        sys.exit(0)
     folders = []
-    if '--list' in args:
-        folders += json.load(open(args[args.index('--list') + 1], encoding='utf-8-sig'))
-    folders += [a for i, a in enumerate(args) if not a.startswith('--') and (i == 0 or args[i - 1] != '--list')]
+    for l in opt('--list'):
+        folders += json.load(open(l, encoding='utf-8-sig'))
+    for root in opt('--scan'):
+        folders += list(batch.find_songs(root))
+    skip_vals = set(opt('--list')) | set(opt('--scan'))
+    folders += [a for a in args if not a.startswith('--') and a not in skip_vals]
     os.makedirs(os.path.join(ROOT, 'reports'), exist_ok=True)
-    rpath = os.path.join(ROOT, 'reports', time.strftime('%Y%m%d-%H%M%S') + ('-eval' if do_eval else '') + '.jsonl')
-    for f in folders:
-        try:
-            r = process(f, do_eval, force)
-        except Exception as e:
-            import traceback; traceback.print_exc()
-            r = {'folder': f, 'status': f'erro: {type(e).__name__}: {e}'}
+    stamp = time.strftime('%Y%m%d-%H%M%S') + ('-eval' if do_eval else '')
+    rpath = os.path.join(ROOT, 'reports', stamp + '.jsonl')
+    reports, n = [], len(folders)
+    print(f'{n} pastas', flush=True)
+    for i, f in enumerate(folders, 1):
+        if not do_eval and not force and batch.generated(f):
+            r = {'folder': f, 'status': 'skip: já gerado (use --force)'}
+        else:
+            try:
+                r = process(f, do_eval, force)
+            except Exception as e:
+                import traceback; traceback.print_exc()
+                r = {'folder': f, 'status': f'erro: {type(e).__name__}: {e}'}
+        if do_apply and r.get('status') == 'ok' and not do_eval:
+            r['applied'] = batch.apply(f)
+        reports.append(r)
         with open(rpath, 'a', encoding='utf-8') as fh:
             fh.write(json.dumps(r, ensure_ascii=False) + '\n')
-        print(json.dumps({k: v for k, v in r.items() if k not in ('folder', 'output')}, ensure_ascii=False), flush=True)
-    print('report:', rpath)
+        print(f"[{i}/{n}] {r.get('status')} | {r.get('artist', '')} - {r.get('title', os.path.basename(f))}", flush=True)
+    batch.write_csv(reports, os.path.join(ROOT, 'reports', stamp + '.csv'))
+    from collections import Counter
+    print(dict(Counter(str(r.get('status')).split(':')[0] for r in reports)))
+    print('report:', rpath.replace('.jsonl', '.csv'))
