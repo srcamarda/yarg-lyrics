@@ -52,6 +52,9 @@ def process(folder, do_eval=False, force=False):
     ch = charts.open_chart(folder)
     artist, title = ini.get('artist', ''), ini.get('name', '')
     rep = {'folder': folder, 'artist': artist, 'title': title, 'format': ch.kind}
+    if os.path.exists(os.path.join(folder, '.nolyrics')):          # marcado à mão: não pôr letra
+        rep['status'] = 'ignorado (.nolyrics)'
+        return rep
     if ch.has_lyrics() and not do_eval:
         rep['status'] = 'skip: já tem letra'
         return rep

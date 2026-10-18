@@ -392,13 +392,17 @@ def verdict(rep):
         return 'REVISAR'
     return 'ok'
 
-# instrumental: quase nada de energia no stem de voz, ou quase nenhum caractere reconhecido
-# (provisório; calibrado com instrumentais do GH3 — tools/voice_stats.py)
-INSTRUMENTAL = {'max_vocal_rms_frac': 0.30, 'max_chars_per_s': 0.5, 'max_voiced_win_frac': 0.15}
+# instrumental: quase nenhum caractere reconhecido pelo CTC na voz separada, ou stem de voz mudo.
+# Energia do stem sozinha NÃO serve: vozes fracas de rips do GH3 (One, Raining Blood) ficam abaixo de 0.3.
+# Calibrado: menor cps entre 80+ músicas com voz = 0.53; instrumentais do GH3 <= 0.47.
+INSTRUMENTAL = {'max_chars_per_s': 0.5, 'max_voiced_win_frac': 0.15, 'mute_vocal_rms_frac': 0.05}
 
 def is_instrumental(q):
     T = INSTRUMENTAL
-    if 'vocal_rms_frac' not in q:
+    if 'chars_per_s' not in q:
         return False
-    return q['vocal_rms_frac'] < T['max_vocal_rms_frac'] or \
-        (q.get('chars_per_s', 9) < T['max_chars_per_s'] and q.get('voiced_win_frac', 1) < T['max_voiced_win_frac'])
+    if q.get('vocal_rms_frac', 1) < T['mute_vocal_rms_frac']:
+        return True
+    if q.get('vocal_rms_frac', 0) > 0.5 and q['chars_per_s'] > 0.4:   # voz forte no stem, só pouco texto (ex.: Priestess - Lay Down)
+        return False
+    return q['chars_per_s'] < T['max_chars_per_s'] and q.get('voiced_win_frac', 1) < T['max_voiced_win_frac']
