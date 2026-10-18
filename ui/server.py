@@ -19,6 +19,19 @@ from yl import charts, batch, align
 STATE_PATH = os.path.join(ROOT, 'ui_state.json')
 STATIC = os.path.join(ROOT, 'ui', 'static')
 app = FastAPI(title='yarg-lyrics')
+
+
+@app.on_event('startup')
+async def _quiet_connection_resets():
+    """No Windows, o asyncio registra como erro quando o navegador aborta um download de áudio
+    (ao pular na música ou trocar Música/Só voz). É inofensivo: ignora só esse caso."""
+    import asyncio
+    loop = asyncio.get_running_loop()
+    def handler(lp, ctx):
+        if isinstance(ctx.get('exception'), (ConnectionResetError, ConnectionAbortedError)):
+            return
+        lp.default_exception_handler(ctx)
+    loop.set_exception_handler(handler)
 lock = threading.RLock()
 
 # ------------------------------------------------------------------ estado persistente
@@ -245,11 +258,11 @@ def info_applied(folder):
 def _clean(s):
     return re.sub(r'[#^*%$/§]', '', s).replace('_', ' ')
 
-@app.get('/api/review')
-def review(folder: str):
+def get_phrases(folder):
+    """Frases/palavras da letra atual da música (gerada, aplicada ou oficial), em tempo de ÁUDIO."""
     path = _lyric_file(folder)
     if not path:
-        raise HTTPException(404, 'Nenhuma letra para revisar')
+        return None, []
     ch = charts.Chart(path) if path.lower().endswith('.chart') else charts.Midi(path)
     lyr, phr = ch.read_lyrics()
     delay = charts.audio_delay(folder, charts.open_chart(folder))
@@ -268,9 +281,17 @@ def review(folder: str):
                 phrases.append({'start': cur[0]['t'], 'end': cur[-1]['t'] + 0.5, 'words': cur}); cur = []
             cur.append(w)
         phrases.append({'start': cur[0]['t'], 'end': cur[-1]['t'] + 0.5, 'words': cur})
+    return path, phrases
+
+@app.get('/api/review')
+def review(folder: str):
+    path, phrases = get_phrases(folder)
+    if not path:
+        raise HTTPException(404, 'Nenhuma letra para revisar')
+    delay = charts.audio_delay(folder, charts.open_chart(folder))
     cd = pipeline.cache_dir(folder)
     ap = os.path.join(cd, 'aligned.json')
-    if os.path.exists(ap) and _lyric_file(folder) and (batch.generated(folder) or info_applied(folder)):
+    if os.path.exists(ap) and (batch.generated(folder) or info_applied(folder)):
         try:
             al = json.load(open(ap, encoding='utf-8'))
             starts = [(p['words'][0]['t'] + delay, p.get('flag', 0)) for p in al if p.get('words')]
@@ -283,12 +304,8 @@ def review(folder: str):
     has_voc = any(os.path.exists(os.path.join(cd, n)) for n in ('vocals16k.wav', 'vocals16k_mix.wav'))
     return {'source': os.path.basename(path), 'phrases': phrases, 'has_vocals': has_voc, 'info': song_info(folder)}
 
-@app.post('/api/adjust')
-def adjust(folder: str = Body(..., embed=True), phrases: list = Body(..., embed=True)):
-    """Salva ajustes manuais de tempo (frases/palavras em tempo de áudio) no chart gerado ou aplicado."""
-    info = song_info(folder)
-    if info['state'] == 'tem letra':
-        raise HTTPException(400, 'Esta música já vinha com letra oficial; ajustes só valem para letras geradas aqui')
+def write_phrases(folder, phrases, keep_flags=True):
+    """Grava frases (tempo de áudio) no chart gerado; se já aplicada, no próprio chart (original fica no .bak)."""
     gen = batch.generated(folder)
     base = charts.open_chart(folder)                 # original (ou o .bak, se já aplicada)
     delay = charts.audio_delay(folder, base)
@@ -311,19 +328,103 @@ def adjust(folder: str = Body(..., embed=True), phrases: list = Body(..., embed=
             shutil.copy2(target, target + '.bak')
     base.write_lyrics(out, target)
     ap = os.path.join(pipeline.cache_dir(folder), 'aligned.json')
-    try:
-        old = json.load(open(ap, encoding='utf-8')) if os.path.exists(ap) else []
-        if len(old) == len(out):
-            for a, b in zip(out, old):
-                a['flag'] = b.get('flag', 0)
-    except ValueError:
-        pass
-    json.dump(out, open(os.path.join(pipeline.cache_dir(folder), 'aligned.json'), 'w', encoding='utf-8'),
-              ensure_ascii=False)
+    if keep_flags:
+        try:
+            old = json.load(open(ap, encoding='utf-8')) if os.path.exists(ap) else []
+            if len(old) == len(out):
+                for a, b in zip(out, old):
+                    a['flag'] = b.get('flag', 0)
+        except ValueError:
+            pass
+    json.dump(out, open(ap, 'w', encoding='utf-8'), ensure_ascii=False)
+    return target, len(out)
+
+@app.post('/api/adjust')
+def adjust(folder: str = Body(..., embed=True), phrases: list = Body(..., embed=True)):
+    """Salva ajustes manuais de tempo (frases/palavras em tempo de áudio) no chart gerado ou aplicado."""
+    if song_info(folder)['state'] == 'tem letra':
+        raise HTTPException(400, 'Esta música já vinha com letra oficial; ajustes só valem para letras geradas aqui')
+    target, n = write_phrases(folder, phrases)
     with lock:
         STATE.setdefault(_key(folder), {})['edited'] = True
     save_state()
-    return {'saved': os.path.basename(target), 'phrases': len(out)}
+    return {'saved': os.path.basename(target), 'phrases': n}
+
+# ------------------------------------------------------------------ outras versões da mesma música
+from yl import twins as twinlib
+LIB_INDEX = {}
+
+def library_index(lib):
+    """{chave normalizada artista/título: [pastas]} da biblioteca inteira (cache em memória, 10 min)."""
+    import time
+    ent = LIB_INDEX.get(lib)
+    if ent and time.time() - ent[0] < 600:
+        return ent[1]
+    idx = {}
+    for f in batch.find_songs(lib):
+        try:
+            idx.setdefault(twinlib.key(f), []).append(f)
+        except Exception:
+            pass
+    LIB_INDEX[lib] = (time.time(), idx)
+    return idx
+
+def _lyr_kind(folder):
+    i = song_info(folder)
+    if i['state'] == 'tem letra':
+        return 'oficial'
+    if i['generated'] or i['applied']:
+        return 'gerada'
+    return 'sem'
+
+def _compare(a, b):
+    fa = twinlib.fingerprint(a, pipeline.cache_dir(a))
+    fb = twinlib.fingerprint(b, pipeline.cache_dir(b))
+    if fa is None or fb is None:
+        return None
+    c = twinlib.compare(fa, fb)
+    c['verdict'] = twinlib.verdict(c)
+    return c
+
+@app.get('/api/twins')
+def find_twins(folder: str, lib: str):
+    idx = library_index(lib)
+    k = twinlib.key(folder)
+    me = _key(folder)
+    out = []
+    for f in idx.get(k, []):
+        if _key(f) == me:
+            continue
+        c = _compare(folder, f)
+        out.append({'folder': f, 'setlist': os.path.basename(os.path.dirname(f)), 'name': os.path.basename(f),
+                    'lyrics': _lyr_kind(f), 'cmp': c})
+    return {'mine': _lyr_kind(folder), 'twins': out}
+
+@app.post('/api/copy-lyrics')
+def copy_lyrics(source: str = Body(..., embed=True), target: str = Body(..., embed=True)):
+    """Copia a letra de uma versão para outra com o MESMO áudio, deslocando pela defasagem medida."""
+    if _lyr_kind(target) == 'oficial':
+        raise HTTPException(400, 'A música de destino já tem letra oficial')
+    c = _compare(source, target)
+    if not c or c['verdict'] != 'igual':
+        raise HTTPException(400, 'O áudio das duas versões não é o mesmo; a letra não encaixaria')
+    path, phrases = get_phrases(source)
+    if not phrases:
+        raise HTTPException(400, 'A versão de origem não tem letra')
+    off = c['offset_s']                      # t_destino = t_origem + offset
+    moved = [{'start': p['start'] + off, 'end': p['end'] + off,
+              'words': [{'t': w['t'] + off, 'text': w['text']} for w in p['words']]} for p in phrases]
+    moved = [p for p in moved if p['words'][0]['t'] >= 0]
+    tpath, n = write_phrases(target, moved, keep_flags=False)
+    rep = {'folder': target, 'status': 'ok', 'lyrics_source': 'cópia', 'copied_from': source,
+           'twin': c, 'phrases': n, 'words': sum(len(p['words']) for p in moved)}
+    with lock:
+        s = STATE.setdefault(_key(target), {})
+        s['report'] = rep
+        s['approved'] = False
+        s['edited'] = False
+    save_state()
+    return {'saved': os.path.basename(tpath), 'phrases': n, 'offset_s': off}
 
 def _preview_mix(folder):
     """Mix de todos os stems num .ogg em cache (para tocar no navegador)."""

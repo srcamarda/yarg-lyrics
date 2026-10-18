@@ -146,6 +146,17 @@ dialog::backdrop { background: rgba(10, 10, 9, .7); }
 }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
 
+/* ---------- outras versões ---------- */
+.twins h3 { margin: 0 0 4px; font: 700 17px var(--cond); }
+.twins p { margin: 0 0 6px; font-size: 13px; }
+.twins ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.twins li { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; font-size: 13px; }
+.twins .tname { flex: 1 1 100%; font-size: 14px; }
+.twins .tname small { color: var(--muted); }
+.v-igual { --c: var(--green); } .v-parecido { --c: var(--yellow); } .v-diferente { --c: var(--dim); }
+.twins .tbtns { margin-left: auto; display: flex; gap: 6px; }
+.twins .tbtns button { padding: 3px 10px; font-size: 13px; }
+
 /* ---------- ajustes ---------- */
 .tune { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; }
 .tunehead { display: flex; justify-content: space-between; align-items: center; gap: 10px; }

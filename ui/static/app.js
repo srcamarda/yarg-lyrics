@@ -212,6 +212,47 @@ async function openReview(folder, keepAudio) {
   if (!keepAudio || !A.src) setAudio(R.kind === 'vocals' && R.data && R.data.has_vocals ? 'vocals' : 'mix', 0);
   $('tune').hidden = !(R.data && R.data.phrases.length) || s.state === 'tem letra';
   drawMarks(); drawLines(); showSel(); showSuspects();
+  if (!keepAudio) loadTwins(folder);
+}
+
+// ------------------------------------------------------------------ outras versões
+const LYR = { oficial: 'letra oficial', gerada: 'letra gerada', sem: 'sem letra' };
+const libRoot = () => S.root.replace(/[\\/]+$/, '').replace(/[\\/][^\\/]+$/, '');
+async function loadTwins(folder) {
+  $('twins').hidden = true; $('twinList').innerHTML = '';
+  let d;
+  try {
+    $('twinMsg').textContent = 'Procurando outras versões e comparando o áudio…'; $('twins').hidden = false;
+    d = await api(`/api/twins?folder=${encodeURIComponent(folder)}&lib=${encodeURIComponent(libRoot())}`);
+  } catch (e) { $('twins').hidden = true; return; }
+  if (S.active !== folder) return;
+  if (!d.twins.length) { $('twins').hidden = true; return; }
+  $('twinMsg').textContent = 'Só dá para copiar entre versões com o mesmo áudio; a letra é deslocada pela defasagem medida.';
+  $('twinList').innerHTML = d.twins.map((t, k) => {
+    const c = t.cmp || { verdict: 'diferente', match_frac: 0, offset_s: 0 };
+    const v = { igual: 'Mesmo áudio', parecido: 'Parecido (não copia)', diferente: 'Áudio diferente' }[c.verdict];
+    const canGet = c.verdict === 'igual' && t.lyrics !== 'sem' && d.mine !== 'oficial';
+    const canSend = c.verdict === 'igual' && d.mine !== 'sem' && t.lyrics !== 'oficial';
+    const det = c.verdict === 'diferente' && !t.cmp ? 'sem áudio para comparar'
+      : `${Math.round(c.match_frac * 100)}% dos trechos batem` + (c.verdict !== 'diferente' ? ` · defasagem ${c.offset_s >= 0 ? '+' : ''}${c.offset_s.toFixed(2)} s` : '');
+    return `<li><span class="tname">${esc(t.name)} <small>${esc(t.setlist)}</small></span>
+      <span class="chip v-${c.verdict}">${v}</span><span class="muted">${det} · ${LYR[t.lyrics]}</span>
+      <span class="tbtns">${canGet ? `<button data-k="${k}" data-dir="get">Trazer a letra de lá</button>` : ''}${canSend ? `<button data-k="${k}" data-dir="send">Levar a letra para lá</button>` : ''}</span></li>`;
+  }).join('');
+  $('twinList').onclick = async (e) => {
+    const b = e.target.closest('button[data-k]'); if (!b) return;
+    const t = d.twins[+b.dataset.k];
+    const [src, dst] = b.dataset.dir === 'get' ? [t.folder, folder] : [folder, t.folder];
+    const dstName = b.dataset.dir === 'get' ? 'esta música' : `“${t.name}” (${t.setlist})`;
+    if (!confirm(`Copiar a letra para ${dstName}? A letra gerada que estiver lá será substituída.`)) return;
+    try {
+      const r = await api('/api/copy-lyrics', { source: src, target: dst });
+      toast(`Letra copiada (${r.phrases} linhas, defasagem ${r.offset_s.toFixed(2)} s)`);
+      await refresh([src, dst].filter((f) => S.songs.some((x) => x.folder === f)));
+      if (dst === S.active) openReview(S.active);
+      else loadTwins(folder);
+    } catch (err) { toast('Não copiou: ' + err.message); }
+  };
 }
 function showSuspects() {
   const P = R.data ? R.data.phrases : [];
