@@ -319,7 +319,7 @@ function showSel() {
   const P = R.data ? R.data.phrases : [];
   $('selLine').textContent = R.sel && P[R.sel.i] ? `${R.sel.i + 1} de ${P.length}` : '— clique numa palavra';
   $('selWord').textContent = R.sel && P[R.sel.i] ? `${R.sel.j + 1} de ${P[R.sel.i].words.length}` : '—';
-  document.querySelectorAll('[data-shift="line"],[data-shift="word"],[data-here],#replay').forEach((b) => { b.disabled = !R.sel; });
+  document.querySelectorAll('[data-shift="line"],[data-shift="word"],[data-shift="rest"],[data-here],#replay').forEach((b) => { b.disabled = !R.sel; });
 }
 
 // ------------------------------------------------------------------ ajustes de tempo
@@ -330,38 +330,65 @@ function setDirty(on) {
   $('saveAdj').disabled = !on; $('undo').disabled = !R.undo.length;
 }
 const snap = () => JSON.stringify(R.data.phrases);
+const GAP = 0.03;
+const lastT = (p) => p.words[p.words.length - 1].t;
+function moveP(p, d) { p.words.forEach((w) => { w.t += d; }); p.start += d; p.end += d; }
+// empurra linhas vizinhas (inteiras) só o necessário para manter a ordem; devolve quantas foram empurradas
+function cascadeLines(P, i) {
+  let n = 0;
+  for (let k = i + 1; k < P.length; k++) {
+    const need = lastT(P[k - 1]) + GAP - P[k].words[0].t;
+    if (need <= 0) break;
+    moveP(P[k], need); n++;
+  }
+  for (let k = i - 1; k >= 0; k--) {
+    const need = P[k + 1].words[0].t - GAP - lastT(P[k]);
+    if (need >= 0) break;
+    moveP(P[k], need); n++;
+  }
+  return n;
+}
+function normalizeBounds(P) {
+  P.forEach((p) => {
+    p.start = Math.max(0, Math.min(p.start, p.words[0].t - 0.01));
+    p.end = Math.max(p.end, lastT(p) + 0.05);
+  });
+  for (let i = 0; i < P.length - 1; i++) {
+    const a = P[i], b = P[i + 1];
+    if (a.end > b.start - 0.02) { a.end = Math.max(lastT(a) + 0.03, b.words[0].t - 0.02); b.start = Math.min(b.words[0].t - 0.01, a.end + 0.01); }
+  }
+}
 function shift(kind, dir, secs) {
   if (!R.data || (kind !== 'all' && !R.sel)) return;
   const P = R.data.phrases, d = secs !== undefined ? secs : dir * R.step / 1000;
+  if (!d) return;
   const before = snap();
-  const allWords = () => P.flatMap((p) => p.words);
-  if (kind === 'all') {
-    const first = P[0].words[0].t, delta = Math.max(d, -first + 0.05);
-    P.forEach((p) => { p.start = Math.max(0, p.start + delta); p.end += delta; p.words.forEach((w) => { w.t += delta; }); });
+  let pushed = 0;
+  if (kind === 'all' || kind === 'rest') {
+    // desloca um trecho inteiro (da linha selecionada até o fim, ou a música toda) sem deformar nada
+    const from = kind === 'all' ? 0 : R.sel.i;
+    const floor = from > 0 ? lastT(P[from - 1]) + GAP : 0.05;
+    const delta = Math.max(d, floor - P[from].words[0].t);
+    if (Math.abs(delta) < 1e-4) { toast('Não dá para antecipar mais: o trecho encostou na linha anterior'); return; }
+    for (let k = from; k < P.length; k++) moveP(P[k], delta);
   } else if (kind === 'line') {
-    const i = R.sel.i, p = P[i];
-    const lo = i > 0 ? P[i - 1].words[P[i - 1].words.length - 1].t + 0.03 : 0.05;
-    const hi = i < P.length - 1 ? P[i + 1].words[0].t - 0.03 : Infinity;
-    let delta = d;
-    if (p.words[0].t + delta < lo) delta = lo - p.words[0].t;
-    if (p.words[p.words.length - 1].t + delta > hi) delta = hi - p.words[p.words.length - 1].t;
-    if (Math.abs(delta) < 1e-4) { toast('A linha já encostou na vizinha'); return; }
-    if (secs !== undefined && Math.abs(delta - d) > 0.005) toast('A linha foi até onde a vizinha permite');
-    p.words.forEach((w) => { w.t += delta; }); p.start = Math.max(0, p.start + delta); p.end += delta;
+    const i = R.sel.i;
+    const delta = Math.max(d, 0.05 - P[0].words[0].t + (i === 0 ? 0 : -Infinity));
+    moveP(P[i], i === 0 ? delta : d);
+    pushed = cascadeLines(P, i);
   } else {
-    const ws = allWords(), p = P[R.sel.i], w = p.words[R.sel.j], k = ws.indexOf(w);
-    const lo = k > 0 ? ws[k - 1].t + 0.03 : 0.05, hi = k < ws.length - 1 ? ws[k + 1].t - 0.03 : Infinity;
-    const nt = Math.min(hi, Math.max(lo, w.t + d));
-    if (Math.abs(nt - w.t) < 1e-4) { toast('A palavra já encostou na vizinha'); return; }
-    if (secs !== undefined && Math.abs(nt - (w.t + d)) > 0.005) toast('A palavra foi até onde a vizinha permite — use “Linha aqui” para mover a linha toda');
-    w.t = nt;
-    p.start = Math.min(p.start, p.words[0].t - 0.01); p.end = Math.max(p.end, p.words[p.words.length - 1].t + 0.05);
+    const i = R.sel.i, p = P[i], j = R.sel.j;
+    p.words[j].t = Math.max(0.05, p.words[j].t + d);
+    for (let m = j + 1; m < p.words.length; m++) if (p.words[m].t < p.words[m - 1].t + GAP) { p.words[m].t = p.words[m - 1].t + GAP; pushed++; }
+    for (let m = j - 1; m >= 0; m--) if (p.words[m].t > p.words[m + 1].t - GAP) { p.words[m].t = p.words[m + 1].t - GAP; pushed++; }
+    p.start = Math.min(p.start, p.words[0].t - 0.01); p.end = Math.max(p.end, lastT(p) + 0.05);
+    const lines = cascadeLines(P, i);
+    if (lines) toast(`Também empurrou ${lines} linha${lines > 1 ? 's' : ''} vizinha${lines > 1 ? 's' : ''}`);
+    pushed = 0;
   }
-  // frases nunca se sobrepõem e sempre contêm as próprias palavras
-  for (let i = 0; i < P.length - 1; i++) {
-    const a = P[i], b = P[i + 1];
-    if (a.end > b.start - 0.02) { a.end = Math.max(a.words[a.words.length - 1].t + 0.03, b.words[0].t - 0.02); b.start = Math.min(b.words[0].t - 0.01, a.end + 0.01); }
-  }
+  if (P[0].words[0].t < 0.05) moveP(P[0], 0.05 - P[0].words[0].t);
+  normalizeBounds(P);
+  if (pushed) toast(`Também empurrou ${pushed} linha${pushed > 1 ? 's' : ''} vizinha${pushed > 1 ? 's' : ''}`);
   R.undo.push(before); if (R.undo.length > 200) R.undo.shift();
   setDirty(true); R.cur = -2; update(); drawMarks();
 }
