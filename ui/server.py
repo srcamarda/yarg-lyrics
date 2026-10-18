@@ -238,6 +238,10 @@ def _lyric_file(folder):
             return os.path.join(folder, files[n])
     return None
 
+def info_applied(folder):
+    files = {f.lower() for f in os.listdir(folder)}
+    return any(f'notes.{e}.bak' in files for e in ('chart', 'mid'))
+
 def _clean(s):
     return re.sub(r'[#^*%$/§]', '', s).replace('_', ' ')
 
@@ -265,6 +269,17 @@ def review(folder: str):
             cur.append(w)
         phrases.append({'start': cur[0]['t'], 'end': cur[-1]['t'] + 0.5, 'words': cur})
     cd = pipeline.cache_dir(folder)
+    ap = os.path.join(cd, 'aligned.json')
+    if os.path.exists(ap) and _lyric_file(folder) and (batch.generated(folder) or info_applied(folder)):
+        try:
+            al = json.load(open(ap, encoding='utf-8'))
+            starts = [(p['words'][0]['t'] + delay, p.get('flag', 0)) for p in al if p.get('words')]
+            for ph in phrases:
+                t0 = ph['words'][0]['t']
+                best = min(starts, key=lambda s: abs(s[0] - t0), default=None)
+                ph['flag'] = best[1] if best and abs(best[0] - t0) < 0.3 else 0
+        except (ValueError, KeyError):
+            pass
     has_voc = any(os.path.exists(os.path.join(cd, n)) for n in ('vocals16k.wav', 'vocals16k_mix.wav'))
     return {'source': os.path.basename(path), 'phrases': phrases, 'has_vocals': has_voc, 'info': song_info(folder)}
 
@@ -295,6 +310,14 @@ def adjust(folder: str = Body(..., embed=True), phrases: list = Body(..., embed=
             import shutil
             shutil.copy2(target, target + '.bak')
     base.write_lyrics(out, target)
+    ap = os.path.join(pipeline.cache_dir(folder), 'aligned.json')
+    try:
+        old = json.load(open(ap, encoding='utf-8')) if os.path.exists(ap) else []
+        if len(old) == len(out):
+            for a, b in zip(out, old):
+                a['flag'] = b.get('flag', 0)
+    except ValueError:
+        pass
     json.dump(out, open(os.path.join(pipeline.cache_dir(folder), 'aligned.json'), 'w', encoding='utf-8'),
               ensure_ascii=False)
     with lock:

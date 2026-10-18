@@ -78,6 +78,7 @@ def process(folder, do_eval=False, force=False):
     if src in ('synced', 'local') and all(l['t'] is not None for l in lines):
         raw, dur, off, nfix = align.align_hybrid(lines, wav, lang)
         rep['mode'] = 'hybrid'; rep['lrc_offset_s'] = round(off, 2); rep['lines_realigned'] = nfix
+        rep['lines_repaired'] = align.LAST_STATS_EXTRA.get('lines_repaired', 0)
     else:
         raw, dur = align.align(lines, wav, lang)
         rep['mode'] = 'global'

@@ -103,7 +103,13 @@ input[type=checkbox] { accent-color: var(--yellow); width: 16px; height: 16px; }
 .timeline::before { content: ''; position: absolute; left: 0; right: 0; top: 12px; height: 2px; background: var(--line); }
 .phr { position: absolute; inset: 0; }
 .phr span { position: absolute; top: 8px; height: 10px; background: #55544e; border-radius: 2px; }
-.phr span.low { background: var(--orange); }
+.phr span.f2 { background: var(--orange); }
+.phr span.f1 { background: #8a7a3c; }
+.suspects { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); }
+.suspects #susText { margin-right: auto; }
+.suspects b.hi { color: var(--orange); }
+.line.cur.flag2::before, .line.cur.flag1::before { content: ''; display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 10px; vertical-align: middle; background: var(--orange); }
+.line.cur.flag1::before { background: #8a7a3c; }
 .pos { position: absolute; top: 3px; width: 2px; height: 20px; background: var(--yellow); left: 0; }
 .time { font-variant-numeric: tabular-nums; color: var(--muted); width: 74px; text-align: right; font-size: 13px; }
 .src { display: flex; }

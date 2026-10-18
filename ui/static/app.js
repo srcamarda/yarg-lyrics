@@ -211,8 +211,27 @@ async function openReview(folder, keepAudio) {
   document.querySelector('.seg[data-kind="vocals"]').disabled = !(R.data && R.data.has_vocals);
   if (!keepAudio || !A.src) setAudio(R.kind === 'vocals' && R.data && R.data.has_vocals ? 'vocals' : 'mix', 0);
   $('tune').hidden = !(R.data && R.data.phrases.length) || s.state === 'tem letra';
-  drawMarks(); drawLines(); showSel();
+  drawMarks(); drawLines(); showSel(); showSuspects();
 }
+function showSuspects() {
+  const P = R.data ? R.data.phrases : [];
+  const hi = P.filter((p) => p.flag === 2).length, md = P.filter((p) => p.flag === 1).length;
+  $('suspects').hidden = !(hi + md);
+  $('susText').innerHTML = `Linhas suspeitas: <b class="hi">${hi} alta${hi === 1 ? '' : 's'}</b> · ${md} média${md === 1 ? '' : 's'}`;
+}
+function jumpSuspect(dir) {
+  const P = R.data ? R.data.phrases : [];
+  const from = R.sel ? R.sel.i : phraseAt(A.currentTime || 0);
+  for (let k = 1; k <= P.length; k++) {
+    const i = (from + dir * k + P.length * 2) % P.length;
+    if (P[i].flag) {
+      R.sel = { i, j: 0 }; A.currentTime = Math.max(0, P[i].start - 0.2); R.cur = -2; update(); showSel(); return;
+    }
+  }
+  toast('Nenhuma linha suspeita');
+}
+$('susNext').addEventListener('click', () => jumpSuspect(1));
+$('susPrev').addEventListener('click', () => jumpSuspect(-1));
 
 function renderStats(s) {
   const r = s.report || {}, q = r.quality || {}, m = metric(s);
@@ -264,7 +283,7 @@ function drawMarks() {
   const d = A.duration;
   if (!R.data || !d) { $('phrMarks').innerHTML = ''; return; }
   $('phrMarks').innerHTML = R.data.phrases.map((p) =>
-    `<span style="left:${100 * p.start / d}%;width:${Math.max(0.3, 100 * (p.end - p.start) / d)}%"></span>`).join('');
+    `<span class="f${p.flag || 0}" style="left:${100 * p.start / d}%;width:${Math.max(0.3, 100 * (p.end - p.start) / d)}%"></span>`).join('');
 }
 
 function phraseAt(t) {
@@ -283,6 +302,7 @@ function drawLines() {
   const P = R.data ? R.data.phrases : [], i = R.cur;
   $('lPrev').innerHTML = lineHTML(P[i - 1], i - 1);
   $('lCur').innerHTML = lineHTML(P[i], i);
+  $('lCur').className = 'line cur' + (P[i] && P[i].flag ? ' flag' + P[i].flag : '');
   $('lNext').innerHTML = lineHTML(P[i + 1], i + 1);
 }
 function update() {
@@ -443,6 +463,7 @@ document.addEventListener('keydown', (e) => {
   else if (e.key === ',') shift('word', -1);
   else if (e.key === '.') shift('word', 1);
   else if (e.key === 'r' || e.key === 'R') replayLine();
+  else if (e.key === 'n' || e.key === 'N') jumpSuspect(e.shiftKey ? -1 : 1);
   else if (e.key === 'Enter') { e.preventDefault(); placeHere(e.shiftKey ? 'line' : 'word'); }
   else if ((e.ctrlKey || e.metaKey) && e.key === 'z') { e.preventDefault(); $('undo').click(); }
 });

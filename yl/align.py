@@ -342,6 +342,33 @@ def _align_block(block_lines, em, ratio, f0, f1, lang, tokenizer, aligner):
         out.append(words)
     return out
 
+LAST_STATS_EXTRA = {}
+
+def _repair_glued(ph, lines, em, ratio, dur, lang, tokenizer, aligner, post):
+    """Linhas coladas na anterior (folga < 0,05 s) e > 0,5 s antes da âncora do LRC costumam estar erradas
+    (54% no gabarito): o alinhador encostou a linha no fim da anterior. Realinha a linha numa janela que começa
+    na âncora; aceita se a confiança não cair muito."""
+    n = 0
+    for k in range(1, len(ph)):
+        p, prev = ph[k], ph[k - 1]
+        if p.get('lrc_t') is None or 'li' not in p:
+            continue
+        first = p['words'][0]['t']
+        prev_end = max((w.get('end') or w['t']) for w in prev['words'])
+        if not (first - prev_end < 0.05 and first - p['lrc_t'] < -0.5):
+            continue
+        t0 = max(prev_end + 0.02, p['lrc_t'] - 0.3)
+        t1 = (ph[k + 1]['lrc_t'] + post) if k + 1 < len(ph) and ph[k + 1].get('lrc_t') is not None else min(dur, p['lrc_t'] + 12)
+        blk = _align_block([lines[p['li']]], em, ratio, int(t0 / ratio), int(t1 / ratio), lang, tokenizer, aligner)
+        if not blk:
+            continue
+        ws = blk[0]
+        new = np.mean([w['score'] for w in ws if w['score'] is not None] or [0])
+        if new >= 0.8 * _line_score(p) and (k + 1 >= len(ph) or ws[-1]['t'] < ph[k + 1]['words'][0]['t']):
+            p['words'] = ws
+            n += 1
+    return ph, n
+
 def align_hybrid(lines, wav_path, lang, good_thr=0.25, pre=1.2, post=0.8):
     em, ratio, dur = emission(wav_path)
     em = torch.log_softmax(em, dim=-1)
@@ -385,6 +412,8 @@ def align_hybrid(lines, wav_path, lang, good_thr=0.25, pre=1.2, post=0.8):
                     ph[i + k]['words'] = ws
                 fixed += j - i
         i = j
+    ph, nrep = _repair_glued(ph, lines, em, ratio, dur, lang, tokenizer, aligner, post)
+    LAST_STATS_EXTRA['lines_repaired'] = nrep
     return ph, dur, off, fixed
 
 
@@ -395,24 +424,30 @@ def quality(phrases, delay):
     q = _quality_v1(phrases, delay)
     ls = [_line_score(p) for p in phrases]
     q['bad_line_frac'] = round(float(np.mean([s < 0.15 for s in ls])), 3) if ls else 1.0
+    fl = line_flags(phrases, delay)
+    for ph, f in zip(phrases, fl):
+        ph['flag'] = f
+    q['suspect_hi_frac'] = round(float(np.mean([f == 2 for f in fl])), 3) if fl else 0.0
+    q['suspect_any_frac'] = round(float(np.mean([f >= 1 for f in fl])), 3) if fl else 0.0
     q['median_line_score'] = round(float(np.median(ls)), 3) if ls else 0.0
     return q
 
-# Veredito calibrado em 47 músicas (11 pt/it + 36 en, voz separada pelo Demucs no mix).
-# Pega todas as claramente ruins (>30% das palavras com erro >1 s). Diferença de duração no LRCLIB,
-# sozinha, não condena: só conta junto com desencontro de linhas ou confiança baixa.
-VERDICT = {'max_lrc_disagree_frac': 0.40, 'min_mean_score': 0.085,
-           'max_duration_delta_s': 8.0, 'dd_disagree_frac': 0.25, 'dd_mean_score': 0.12}
+# Veredito: calibrado em 57 músicas (gabarito com letra feita à mão, voz separada pelo Demucs).
+# REVISAR se >12% das linhas têm suspeita alta (pega a maioria das músicas com >15% de linhas erradas,
+# 4 alarmes falsos em 57), ou se a letra do LRCLIB claramente não é desta versão.
+VERDICT = {'max_suspect_hi_frac': 0.12, 'max_lrc_disagree_frac': 0.40,
+           'max_duration_delta_s': 8.0, 'dd_disagree_frac': 0.25}
 
 def verdict(rep):
     q, V = rep.get('quality', {}), VERDICT
-    d, m = q.get('lrc_disagree_frac', 0), q.get('mean_score', 0)
+    d = q.get('lrc_disagree_frac', 0)
     dd = (rep.get('lrclib') or {}).get('duration_delta_s', 0)
-    if d > V['max_lrc_disagree_frac'] or m < V['min_mean_score']:
+    if q.get('suspect_hi_frac', 0) > V['max_suspect_hi_frac'] or d > V['max_lrc_disagree_frac']:
         return 'REVISAR'
-    if dd > V['max_duration_delta_s'] and (d > V['dd_disagree_frac'] or m < V['dd_mean_score']):
+    if dd > V['max_duration_delta_s'] and d > V['dd_disagree_frac']:
         return 'REVISAR'
     return 'ok'
+
 
 # instrumental: quase nenhum caractere reconhecido pelo CTC na voz separada, ou stem de voz mudo.
 # Energia do stem sozinha NÃO serve: vozes fracas de rips do GH3 (One, Raining Blood) ficam abaixo de 0.3.
@@ -428,3 +463,37 @@ def is_instrumental(q):
     if q.get('vocal_rms_frac', 0) > 0.5 and q['chars_per_s'] > 0.4:   # voz forte no stem, só pouco texto (ex.: Priestess - Lay Down)
         return False
     return q['chars_per_s'] < T['max_chars_per_s'] and q.get('voiced_win_frac', 1) < T['max_voiced_win_frac']
+
+
+# ================================================================ suspeita por linha
+# Calibrado em 2041 linhas de 57 músicas com letra feita à mão (tools/line_quality.py):
+#   nível 2 (alta)  -> 70% das linhas assim estão erradas (>0,5 s); cobre 77% das linhas erradas
+#   nível 1 (média) -> 14% erradas;   nível 0 -> 3% erradas
+def line_flags(phrases, delay=0.0):
+    out = []
+    for k, p in enumerate(phrases):
+        ws = p['words']
+        first = ws[0]['t']
+        last_end = max((w.get('end') or w['t']) for w in ws)
+        dur = max(0.05, last_end - first)
+        lrc = p.get('lrc_t')
+        nxt = phrases[k + 1].get('lrc_t') if k + 1 < len(phrases) else None
+        lrc_dur = min(8.0, nxt - lrc) if (lrc is not None and nxt is not None and nxt > lrc) else None
+        ratio = dur / lrc_dur if lrc_dur else None
+        dev = abs(first + delay - lrc) if lrc is not None else 0.0
+        sc = [w['score'] for w in ws if w.get('score') is not None]
+        if not sc:                          # sem métricas (ex.: linha ajustada à mão)
+            out.append(0); continue
+        score = float(np.mean(sc))
+        cps = sum(len(norm_word(w['text'], 'pt')) for w in ws) / dur
+        gap = first - max((w.get('end') or w['t']) for w in phrases[k - 1]['words']) if k else None
+        sdev = (first + delay - lrc) if lrc is not None else 0.0
+        glued_early = gap is not None and gap < 0.05 and sdev < -0.5      # 54% erradas no gabarito
+        if dev > 2 or (ratio is not None and ratio > 1.5) or cps > 30 or glued_early or \
+                (score < 0.03 and ratio is not None and ratio < 0.5):
+            out.append(2)
+        elif score < 0.03 or (ratio is not None and ratio < 0.3) or cps < 4 or cps > 18 or (gap is not None and gap < 0.05 and score < 0.06):
+            out.append(1)
+        else:
+            out.append(0)
+    return out
