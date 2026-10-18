@@ -6,3 +6,4 @@ last_report.json
 reports/
 __pycache__/
 
+.venv-rocm/

@@ -5,6 +5,7 @@ import torch, torchaudio
 import soundfile as sf
 
 SR = 16000
+DEVICE = os.environ.get('YL_DEVICE') or ('cuda' if torch.cuda.is_available() else 'cpu')
 SKIP_STEMS = ('preview', 'crowd')
 AUDIO_EXT = ('.ogg', '.opus', '.mp3', '.wav', '.flac')
 
@@ -33,7 +34,7 @@ def vocals_16k(folder, cache):
         return out, 'stem'
     mix = os.path.join(cache, 'mix.wav')
     _ffmpeg_decode(all_stems, mix, 44100, False)
-    subprocess.run([sys.executable, '-m', 'demucs', '--two-stems=vocals', '-n', 'htdemucs',
+    subprocess.run([sys.executable, '-m', 'demucs', '--two-stems=vocals', '-n', 'htdemucs', '-d', DEVICE,
                     '-o', os.path.join(cache, 'demucs'), mix], check=True,
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     dv = os.path.join(cache, 'demucs', 'htdemucs', 'mix', 'vocals.wav')
@@ -50,7 +51,7 @@ def _get_model():
     global _model
     if _model is None:
         torch.set_num_threads(max(1, os.cpu_count() - 1))
-        _model = _bundle.get_model(with_star=True).eval()
+        _model = _bundle.get_model(with_star=True).eval().to(DEVICE)
     return _model
 
 def emission(wav_path, chunk_s=30, ctx_s=2):
@@ -66,8 +67,8 @@ def emission(wav_path, chunk_s=30, ctx_s=2):
         while s < n:
             e = min(n, s + chunk_s * SR)
             a, b = max(0, s - ctx_s * SR), min(n, e + ctx_s * SR)
-            em, _ = model(wav[a:b].unsqueeze(0))
-            em = em[0]
+            em, _ = model(wav[a:b].unsqueeze(0).to(DEVICE))
+            em = em[0].float().cpu()
             f0 = (s - a) // hop
             f1 = f0 + (e - s) // hop
             out.append(em[f0:min(f1, em.shape[0])])

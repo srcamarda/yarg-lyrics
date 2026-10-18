@@ -1,0 +1,16 @@
+numpy
+mido
+requests
+soundfile
+num2words
+dora-search
+einops
+julius
+lameenc
+openunmix
+pyyaml
+tqdm
+sphn
+huggingface-hub
+safetensors
+
