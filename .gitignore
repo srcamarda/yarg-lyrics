@@ -1,0 +1,8 @@
+.venv/
+cache/
+*.log
+*.err
+last_report.json
+reports/
+__pycache__/
+
