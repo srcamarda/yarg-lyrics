@@ -309,7 +309,7 @@ $('stage').addEventListener('click', (e) => {
   const i = +s.dataset.i, p = R.data.phrases[i]; if (!p) return;
   const w = e.target.closest('.w');
   R.sel = { i, j: w ? +w.dataset.j : 0 };
-  A.currentTime = Math.max(0, p.start - 0.6); R.cur = -2; update(); showSel();
+  A.currentTime = Math.max(0, p.start - 0.2); R.cur = -2; update(); showSel();
 });
 function showSel() {
   const P = R.data ? R.data.phrases : [];
