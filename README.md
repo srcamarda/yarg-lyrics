@@ -24,7 +24,19 @@ $u = 'https://repo.radeon.com/rocm/windows/rocm-rel-7.2.1'
 `demucs` vai com `--no-deps` para o pip não trocar o PyTorch da AMD pelo de CPU.
 O dispositivo é escolhido sozinho (`cuda` se a GPU existir); force com `$env:YL_DEVICE='cpu'`.
 
-## Uso
+## Interface
+
+Dê dois cliques em `yarg-lyrics-ui.bat`: abre `http://127.0.0.1:8765` no navegador.
+
+- **Procurar…** escolhe a pasta da setlist; a lista marca o status de cada música (já tem letra, pendente, ok, revisar, sem letra, instrumental, aplicada).
+- Selecione algumas (ou *Selecionar visíveis*) e clique **Gerar letras**; a fila roda na GPU e a tabela atualiza sozinha.
+- Clique numa música para revisar: toca a música (ou só a voz separada) com a letra acendendo palavra por palavra.
+  Espaço toca/pausa, ← → pulam 5 s, clique numa frase para ir até ela.
+- **Marcar como ok** aprova uma `REVISAR`; **Aplicar** grava no chart (original vira `notes.*.bak`); **Restaurar original** desfaz.
+- **Editar letra e ressincronizar** / **Adicionar letra**: cola a letra (texto simples ou LRC com tempos), salva como `lyrics.txt` na pasta da música — que passa a ter prioridade sobre o LRCLIB — e sincroniza de novo.
+- **Não tem letra** cria um `.nolyrics` na pasta: a música é ignorada nas próximas execuções.
+
+## Uso pela linha de comando
 
 ```powershell
 $py = '.\.venv-rocm\Scripts\python.exe'

@@ -58,12 +58,13 @@ def process(folder, do_eval=False, force=False):
     if ch.has_lyrics() and not do_eval:
         rep['status'] = 'skip: já tem letra'
         return rep
-    rec = lyrics.fetch(artist, title, song_len_s(ini), os.path.join(cd, 'lrclib.json'))
-    lines, src = lyrics.from_record(rec)
-    if not lines:
-        local = os.path.join(folder, 'lyrics.txt')
-        if os.path.exists(local):
-            lines, src = lyrics.parse_lrc(open(local, encoding='utf-8').read()), 'local'
+    local = os.path.join(folder, 'lyrics.txt')                 # letra manual tem prioridade
+    rec = None
+    if os.path.exists(local):
+        lines, src = lyrics.parse_lrc(open(local, encoding='utf-8-sig').read()), 'local'
+    else:
+        rec = lyrics.fetch(artist, title, song_len_s(ini), os.path.join(cd, 'lrclib.json'))
+        lines, src = lyrics.from_record(rec)
     if not lines:
         rep['status'] = 'instrumental (LRCLIB)' if rec and rec.get('instrumental') else 'sem letra (LRCLIB vazio e sem lyrics.txt)'
         return rep

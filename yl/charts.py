@@ -183,12 +183,14 @@ class Midi:
         chunk = midifix.track_bytes(tr, self.mid.ticks_per_beat)
         midifix.write(out_path, self.hdr, self.raw, self.vi, chunk)
 
-def open_chart(folder):
+def open_chart(folder, prefer_backup=True):
+    """Abre notes.chart/.mid. Se houver notes.X.bak (original guardado pelo --apply), abre o original."""
     files = {f.lower(): f for f in os.listdir(folder)}
-    if 'notes.chart' in files:
-        return Chart(os.path.join(folder, files['notes.chart']))
-    if 'notes.mid' in files:
-        return Midi(os.path.join(folder, files['notes.mid']))
+    for name, cls in (('notes.chart', Chart), ('notes.mid', Midi)):
+        if prefer_backup and name + '.bak' in files:
+            return cls(os.path.join(folder, files[name + '.bak']))
+        if name in files:
+            return cls(os.path.join(folder, files[name]))
     raise FileNotFoundError('sem notes.chart/notes.mid')
 
 def audio_delay(folder, chart):

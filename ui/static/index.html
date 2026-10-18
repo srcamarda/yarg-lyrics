@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>yarg-lyrics</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Barlow+Condensed:wght@500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand"><span class="frets" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span>yarg-lyrics</div>
+  <form id="folderForm" class="folder">
+    <label for="root" class="sr">Pasta de músicas</label>
+    <input id="root" placeholder="Pasta de músicas, ex.: D:\Jogos\Setlists\Guitar Hero 3 - Legends of Rock" autocomplete="off">
+    <button type="button" id="pick" class="ghost">Procurar…</button>
+    <button type="submit" id="load">Carregar</button>
+  </form>
+</header>
+
+<section class="bar" id="bar" hidden>
+  <div class="chips" id="chips" role="tablist" aria-label="Filtrar por status"></div>
+  <input id="search" type="search" placeholder="Buscar artista ou música" aria-label="Buscar">
+  <div class="sel">
+    <span id="selCount">0 selecionadas</span>
+    <button class="ghost small" id="selVisible">Selecionar visíveis</button>
+    <button class="ghost small" id="selNone">Limpar</button>
+  </div>
+  <div class="actions">
+    <button id="runSel" disabled>Gerar letras</button>
+    <button id="applySel" class="go" disabled>Aplicar</button>
+    <button id="restoreSel" class="ghost" disabled>Restaurar originais</button>
+  </div>
+</section>
+
+<section class="job" id="job" hidden>
+  <div class="jobtext"><strong id="jobCount"></strong> <span id="jobCur"></span></div>
+  <div class="meter"><div id="jobFill"></div></div>
+  <button class="ghost small" id="cancel">Parar depois desta</button>
+</section>
+
+<main class="layout">
+  <div class="tablewrap" id="tablewrap">
+    <div class="empty" id="empty">
+      <p>Escolha uma pasta de setlist para listar as músicas.</p>
+      <p class="muted">A pasta pode ter subpastas: toda pasta com <code>song.ini</code> e <code>notes.chart</code>/<code>notes.mid</code> entra na lista.</p>
+    </div>
+    <table id="table" hidden>
+      <thead><tr>
+        <th class="ck"><input type="checkbox" id="ckAll" aria-label="Selecionar visíveis"></th>
+        <th data-sort="state">Status</th>
+        <th data-sort="artist">Artista</th>
+        <th data-sort="title">Música</th>
+        <th data-sort="format" class="num">Arquivo</th>
+        <th data-sort="source">Letra</th>
+        <th data-sort="conf" class="num" title="Confiança média do alinhamento">Confiança</th>
+        <th data-sort="dis" class="num" title="Linhas cujo tempo discorda do LRCLIB">Desencontro</th>
+        <th data-sort="dd" class="num" title="Diferença de duração entre a versão do LRCLIB e o seu áudio">Δ duração</th>
+        <th data-sort="voice" class="num" title="Caracteres reconhecidos por segundo na voz separada">Voz</th>
+      </tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+  </div>
+
+  <aside class="review" id="review" hidden aria-label="Revisão">
+    <div class="rhead">
+      <div>
+        <div class="rtitle" id="rTitle"></div>
+        <div class="rartist" id="rArtist"></div>
+      </div>
+      <button class="ghost small" id="rClose" aria-label="Fechar revisão">Fechar</button>
+    </div>
+    <div class="rstate"><span class="chip" id="rChip"></span><span id="rWhy" class="muted"></span></div>
+
+    <div class="stage" id="stage">
+      <div class="line prev" id="lPrev"></div>
+      <div class="line cur" id="lCur"></div>
+      <div class="line next" id="lNext"></div>
+      <div class="stagemsg" id="stageMsg"></div>
+    </div>
+
+    <div class="player">
+      <button id="play" class="playbtn" aria-label="Tocar">▶</button>
+      <div class="timeline" id="timeline"><div class="phr" id="phrMarks"></div><div class="pos" id="pos"></div></div>
+      <span class="time" id="time">0:00</span>
+      <div class="src" role="radiogroup" aria-label="Áudio">
+        <button class="seg on" data-kind="mix" role="radio" aria-checked="true">Música</button>
+        <button class="seg" data-kind="vocals" role="radio" aria-checked="false">Só voz</button>
+      </div>
+      <audio id="audio" preload="auto"></audio>
+    </div>
+    <p class="hint muted">Espaço toca/pausa · ← → voltam/avançam 5 s · clique numa frase para pular até ela</p>
+
+    <dl class="stats" id="rStats"></dl>
+
+    <div class="ractions">
+      <button id="rApprove" class="go">Marcar como ok</button>
+      <button id="rUnapprove" class="ghost">Voltar para revisar</button>
+      <button id="rApply" class="go">Aplicar no chart</button>
+      <button id="rRestore" class="ghost">Restaurar original</button>
+      <button id="rEdit">Editar letra e ressincronizar</button>
+      <button id="rRerun" class="ghost">Gerar de novo</button>
+      <button id="rNoLyr" class="ghost danger">Não tem letra</button>
+    </div>
+  </aside>
+</main>
+
+<dialog id="editor">
+  <form method="dialog" class="edform">
+    <h2 id="edTitle">Letra</h2>
+    <p class="muted" id="edSrc"></p>
+    <p class="muted">Uma linha por verso. Pode colar texto simples ou LRC com tempos (<code>[01:23.45] verso</code>) — com tempos o alinhamento fica mais preciso. Linhas vazias e marcações como [Refrão] são ignoradas.</p>
+    <textarea id="edText" spellcheck="false" aria-label="Letra"></textarea>
+    <div class="edactions">
+      <button value="cancel" class="ghost">Cancelar</button>
+      <button id="edClear" type="button" class="ghost danger">Remover letra manual</button>
+      <button id="edSave" type="button" class="go">Salvar e ressincronizar</button>
+    </div>
+  </form>
+</dialog>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+<script src="app.js"></script>
+</body>
+</html>
