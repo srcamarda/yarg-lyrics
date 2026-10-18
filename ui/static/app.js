@@ -277,7 +277,7 @@ function lineHTML(p, idx) {
   if (!p) return '';
   const sl = R.sel && R.sel.i === idx;
   return `<span data-i="${idx}"${sl ? ' class="selline"' : ''}>` + p.words.map((w, j) =>
-    `<span class="w${sl && R.sel.j === j ? ' sel' : ''}" data-j="${j}">${esc(w.text)}</span>`).join(' ') + '</span>';
+    `<span class="w${sl && R.sel.j === j ? ' picked' : ''}" data-j="${j}">${esc(w.text)}</span>`).join(' ') + '</span>';
 }
 function drawLines() {
   const P = R.data ? R.data.phrases : [], i = R.cur;

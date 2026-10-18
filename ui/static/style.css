@@ -89,7 +89,7 @@ input[type=checkbox] { accent-color: var(--yellow); width: 16px; height: 16px; }
 .line.prev, .line.next { font-size: 20px; font-weight: 500; color: var(--dim); }
 .line { text-wrap: balance; }
 .line.cur { font-size: 30px; font-weight: 700; color: #cfd2ea; }
-.line .w.sel, .line .w.sel.sung, .line .w.sel.now { color: #7fb0ff; text-shadow: none; }
+.line .w.picked, .line .w.picked.sung, .line .w.picked.now { color: #7fb0ff; text-shadow: none; }
 .line .w { transition: color .08s; }
 .line .w.sung { color: var(--yellow); }
 .line .w.now { color: #fff; text-shadow: 0 0 14px rgba(242, 201, 76, .75); }
