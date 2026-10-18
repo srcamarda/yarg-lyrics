@@ -308,13 +308,12 @@ $('stage').addEventListener('click', (e) => {
   const s = e.target.closest('[data-i]'); if (!s || !R.data) return;
   const i = +s.dataset.i, p = R.data.phrases[i]; if (!p) return;
   const w = e.target.closest('.w');
+  // duplo clique detectado pelo tempo: o 1º clique redesenha as linhas, então o evento dblclick nativo se perde
+  const now = performance.now(), dbl = R.lastClick && R.lastClick.i === i && now - R.lastClick.t < 450;
+  R.lastClick = dbl ? null : { i, t: now };
   R.sel = { i, j: w ? +w.dataset.j : 0 };
+  if (dbl) A.currentTime = Math.max(0, p.start - 0.2);
   R.cur = -2; update(); showSel();
-});
-$('stage').addEventListener('dblclick', (e) => {
-  const s = e.target.closest('[data-i]'); if (!s || !R.data) return;
-  const p = R.data.phrases[+s.dataset.i]; if (!p) return;
-  A.currentTime = Math.max(0, p.start - 0.2); R.cur = -2; update();
 });
 function showSel() {
   const P = R.data ? R.data.phrases : [];
