@@ -309,13 +309,18 @@ $('stage').addEventListener('click', (e) => {
   const i = +s.dataset.i, p = R.data.phrases[i]; if (!p) return;
   const w = e.target.closest('.w');
   R.sel = { i, j: w ? +w.dataset.j : 0 };
-  A.currentTime = Math.max(0, p.start - 0.2); R.cur = -2; update(); showSel();
+  R.cur = -2; update(); showSel();
+});
+$('stage').addEventListener('dblclick', (e) => {
+  const s = e.target.closest('[data-i]'); if (!s || !R.data) return;
+  const p = R.data.phrases[+s.dataset.i]; if (!p) return;
+  A.currentTime = Math.max(0, p.start - 0.2); R.cur = -2; update();
 });
 function showSel() {
   const P = R.data ? R.data.phrases : [];
   $('selLine').textContent = R.sel && P[R.sel.i] ? `${R.sel.i + 1} de ${P.length}` : '— clique numa palavra';
   $('selWord').textContent = R.sel && P[R.sel.i] ? `${R.sel.j + 1} de ${P[R.sel.i].words.length}` : '—';
-  document.querySelectorAll('[data-shift="line"],[data-shift="word"],#replay').forEach((b) => { b.disabled = !R.sel; });
+  document.querySelectorAll('[data-shift="line"],[data-shift="word"],[data-here],#replay').forEach((b) => { b.disabled = !R.sel; });
 }
 
 // ------------------------------------------------------------------ ajustes de tempo
@@ -326,9 +331,9 @@ function setDirty(on) {
   $('saveAdj').disabled = !on; $('undo').disabled = !R.undo.length;
 }
 const snap = () => JSON.stringify(R.data.phrases);
-function shift(kind, dir) {
+function shift(kind, dir, secs) {
   if (!R.data || (kind !== 'all' && !R.sel)) return;
-  const P = R.data.phrases, d = dir * R.step / 1000;
+  const P = R.data.phrases, d = secs !== undefined ? secs : dir * R.step / 1000;
   const before = snap();
   const allWords = () => P.flatMap((p) => p.words);
   if (kind === 'all') {
@@ -342,12 +347,14 @@ function shift(kind, dir) {
     if (p.words[0].t + delta < lo) delta = lo - p.words[0].t;
     if (p.words[p.words.length - 1].t + delta > hi) delta = hi - p.words[p.words.length - 1].t;
     if (Math.abs(delta) < 1e-4) { toast('A linha já encostou na vizinha'); return; }
+    if (secs !== undefined && Math.abs(delta - d) > 0.005) toast('A linha foi até onde a vizinha permite');
     p.words.forEach((w) => { w.t += delta; }); p.start = Math.max(0, p.start + delta); p.end += delta;
   } else {
     const ws = allWords(), p = P[R.sel.i], w = p.words[R.sel.j], k = ws.indexOf(w);
     const lo = k > 0 ? ws[k - 1].t + 0.03 : 0.05, hi = k < ws.length - 1 ? ws[k + 1].t - 0.03 : Infinity;
     const nt = Math.min(hi, Math.max(lo, w.t + d));
     if (Math.abs(nt - w.t) < 1e-4) { toast('A palavra já encostou na vizinha'); return; }
+    if (secs !== undefined && Math.abs(nt - (w.t + d)) > 0.005) toast('A palavra foi até onde a vizinha permite — use “Linha aqui” para mover a linha toda');
     w.t = nt;
     p.start = Math.min(p.start, p.words[0].t - 0.01); p.end = Math.max(p.end, p.words[p.words.length - 1].t + 0.05);
   }
@@ -366,6 +373,12 @@ document.querySelector('.tune').addEventListener('click', (e) => {
     document.querySelectorAll('.steps .seg').forEach((x) => x.classList.toggle('on', x === b));
   } else if (b.dataset.shift) shift(b.dataset.shift, +b.dataset.dir);
 });
+function placeHere(kind) {
+  if (!R.sel || !R.data) { toast('Selecione uma palavra primeiro'); return; }
+  const w = R.data.phrases[R.sel.i].words[R.sel.j];
+  shift(kind, 0, A.currentTime - w.t);
+}
+document.querySelectorAll('[data-here]').forEach((b) => b.addEventListener('click', () => placeHere(b.dataset.here)));
 function replayLine() {
   if (!R.sel || !R.data) return;
   A.currentTime = Math.max(0, R.data.phrases[R.sel.i].start - 0.8); update(); A.play();
@@ -404,6 +417,7 @@ document.addEventListener('keydown', (e) => {
   else if (e.key === ',') shift('word', -1);
   else if (e.key === '.') shift('word', 1);
   else if (e.key === 'r' || e.key === 'R') replayLine();
+  else if (e.key === 'Enter') { e.preventDefault(); placeHere(e.shiftKey ? 'line' : 'word'); }
   else if ((e.ctrlKey || e.metaKey) && e.key === 'z') { e.preventDefault(); $('undo').click(); }
 });
 $('rClose').addEventListener('click', () => { if (R.dirty && !confirm('Há ajustes de tempo não salvos. Descartar?')) return; setDirty(false); R.undo = []; A.pause(); $('review').hidden = true; S.active = null; render(); });

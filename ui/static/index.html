@@ -91,7 +91,7 @@
       </div>
       <audio id="audio" preload="auto"></audio>
     </div>
-    <p class="hint muted">Espaço toca/pausa · ← → 5 s · clique numa palavra para selecioná-la (e a linha) · R ouve a linha de novo</p>
+    <p class="hint muted">Espaço toca/pausa · ← → 5 s · clique seleciona a palavra · duplo clique pula para a linha · R ouve a linha · Enter põe a palavra no ponto atual</p>
 
     <section class="tune" id="tune" aria-label="Ajustes de tempo">
       <div class="tunehead">
@@ -104,12 +104,14 @@
         <span class="tlabel">Linha <b id="selLine">—</b></span>
         <button data-shift="line" data-dir="-1" title="Antecipar a linha ( [ )">− antes</button>
         <button data-shift="line" data-dir="1" title="Atrasar a linha ( ] )">depois +</button>
+        <button data-here="line" title="Move a linha para a palavra selecionada cair no ponto atual do áudio (Shift+Enter)">Linha aqui</button>
         <button id="replay" class="ghost" title="Ouvir a linha de novo (R)">Ouvir linha</button>
       </div>
       <div class="tunerow">
         <span class="tlabel">Palavra <b id="selWord">—</b></span>
         <button data-shift="word" data-dir="-1" title="Antecipar a palavra ( , )">− antes</button>
         <button data-shift="word" data-dir="1" title="Atrasar a palavra ( . )">depois +</button>
+        <button data-here="word" title="Põe a palavra no ponto atual do áudio (Enter)">Palavra aqui</button>
       </div>
       <div class="tunerow">
         <span class="tlabel">Música inteira</span>
