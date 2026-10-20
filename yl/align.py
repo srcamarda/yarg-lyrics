@@ -585,7 +585,8 @@ def is_instrumental(q):
         return False
     if q.get('vocal_rms_frac', 1) < T['mute_vocal_rms_frac']:
         return True
-    if q.get('vocal_rms_frac', 0) > 0.5 and q['chars_per_s'] > 0.4:   # voz forte no stem, só pouco texto (ex.: Priestess - Lay Down)
+    # voz forte no stem, só pouco texto (ex.: Priestess - Lay Down: MMS 0,5 / w2v 0,40 caractere/s)
+    if q.get('vocal_rms_frac', 0) > 0.5 and q['chars_per_s'] >= 0.3:
         return False
     return q['chars_per_s'] < T['max_chars_per_s'] and q.get('voiced_win_frac', 1) < T['max_voiced_win_frac']
 
