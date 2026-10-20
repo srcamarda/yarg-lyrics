@@ -102,6 +102,9 @@ def process(folder, do_eval=False, force=False):
         # guarda o resultado por configuração (voz de stem/mix + separador) p/ experimentos offline (tools/exp_*.py)
         tag = ('mix_' if os.environ.get('YL_IGNORE_VOCAL_STEM') == '1' else 'stem_') + \
               re.sub(r'\W+', '', os.path.splitext(align.separator())[0])[:24]
+        from yl import aligners
+        if aligners.name() != 'mms':
+            tag += '_' + re.sub(r'\W+', '', aligners.name())
         json.dump({'vocals_wav': wav, 'delay': delay, 'lang': lang, 'phrases': phrases},
                   open(os.path.join(cd, f'aligned_eval_{tag}.json'), 'w', encoding='utf-8'), ensure_ascii=False)
         ref = charts.lyric_events_to_words(ch.read_lyrics()[0], ch.tmap)

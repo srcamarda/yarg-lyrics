@@ -116,12 +116,20 @@ def _uvr_vocals_inproc(model, mix, out_dir):
 _bundle = torchaudio.pipelines.MMS_FA
 _model = None
 
+_tok = None
+
 def _get_model():
-    global _model
+    """Modelo CTC escolhido por YL_ALIGNER (mms padrão; ver yl/aligners.py)."""
+    global _model, _tok
     if _model is None:
+        from yl import aligners
         torch.set_num_threads(max(1, os.cpu_count() - 1))
-        _model = _bundle.get_model(with_star=True).eval().to(DEVICE)
+        _model, _tok = aligners.load(DEVICE)
     return _model
+
+def _tokenizer():
+    _get_model()
+    return _tok
 
 def emission(wav_path, chunk_s=30, ctx_s=2):
     wav, sr = sf.read(wav_path, dtype='float32')
@@ -193,7 +201,7 @@ def align(lines, wav_path, lang):
     """lines: [{'t':s|None,'words':[str]}]. Retorna frases com tempo por palavra (tempo de áudio)."""
     em, ratio, dur = emission(wav_path)
     em = torch.log_softmax(em, dim=-1)
-    tokenizer, aligner = _bundle.get_tokenizer(), _bundle.get_aligner()
+    tokenizer, aligner = _tokenizer(), _bundle.get_aligner()
     flat, owner = ['*'], [None]
     for li, l in enumerate(lines):
         for wi, w in enumerate(l['words']):
@@ -316,7 +324,7 @@ def estimate_offset(lines, act, ratio, search=30.0, step=0.05):
 def align_anchored(lines, wav_path, lang, pre=1.2, post=0.8):
     em, ratio, dur = emission(wav_path)
     em = torch.log_softmax(em, dim=-1)
-    tokenizer, aligner = _bundle.get_tokenizer(), _bundle.get_aligner()
+    tokenizer, aligner = _tokenizer(), _bundle.get_aligner()
     act = _activity(em)
     T = em.shape[0]
     best = None
@@ -437,7 +445,7 @@ def _repair_glued(ph, lines, em, ratio, dur, lang, tokenizer, aligner, post):
 def align_hybrid(lines, wav_path, lang, good_thr=0.25, pre=1.2, post=0.8):
     em, ratio, dur = emission(wav_path)
     em = torch.log_softmax(em, dim=-1)
-    tokenizer, aligner = _bundle.get_tokenizer(), _bundle.get_aligner()
+    tokenizer, aligner = _tokenizer(), _bundle.get_aligner()
     T = em.shape[0]
     act = _activity(em)
     best = None
