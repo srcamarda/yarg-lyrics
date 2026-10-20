@@ -75,12 +75,24 @@ def process(folder, do_eval=False, force=False):
     rep['lang'] = lang
     wav, how = align.vocals_16k(folder, cd)
     rep['vocals'] = how
+    from yl import aligners
+    rep['aligner'] = aligners.name()
     if src in ('synced', 'local') and all(l['t'] is not None for l in lines):
         raw, dur, off, nfix = align.align_hybrid(lines, wav, lang)
         rep['mode'] = 'hybrid'; rep['lrc_offset_s'] = round(off, 2); rep['lines_realigned'] = nfix
         rep['lines_repaired'] = align.LAST_STATS_EXTRA.get('lines_repaired', 0)
+        raw = align.debias(raw)
+        second = aligners.second_for(lang)
+        if second:                                   # 2ª opinião: consenso por linha, desempate pelo LRCLIB
+            stats = dict(align.LAST_STATS)           # estatísticas de voz ficam as do modelo principal
+            with aligners.using(second):
+                raw2 = align.debias(align.align_hybrid(lines, wav, lang)[0])
+            raw, n2 = align.consensus_lrc(raw, raw2)
+            align.LAST_STATS.clear(); align.LAST_STATS.update(stats)
+            rep['second_opinion'] = second; rep['lines_from_second'] = n2
     else:
         raw, dur = align.align(lines, wav, lang)
+        raw = align.debias(raw)
         rep['mode'] = 'global'
     delay = charts.audio_delay(folder, ch)
     phrases = align.finalize(raw, delay)
@@ -105,6 +117,12 @@ def process(folder, do_eval=False, force=False):
         from yl import aligners
         if aligners.name() != 'mms':
             tag += '_' + re.sub(r'\W+', '', aligners.name())
+        if os.environ.get('YL_ALT_CKPT') == 'mid':
+            tag += '_mid'
+        if rep.get('second_opinion'):
+            tag += '_2' + re.sub(r'\W+', '', rep['second_opinion'])
+        elif not os.environ.get('YL_ALIGNER'):
+            tag += '_padrao'
         json.dump({'vocals_wav': wav, 'delay': delay, 'lang': lang, 'phrases': phrases},
                   open(os.path.join(cd, f'aligned_eval_{tag}.json'), 'w', encoding='utf-8'), ensure_ascii=False)
         ref = charts.lyric_events_to_words(ch.read_lyrics()[0], ch.tmap)

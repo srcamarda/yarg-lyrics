@@ -41,6 +41,9 @@ def vocals_16k(folder, cache):
     out = os.path.join(cache, ('vocals16k_mix' if ignore_stem else 'vocals16k') + tag + '.wav')
     if os.path.exists(out):
         return out, 'cache'
+    if sep == 'none':                       # sem separação: o mix inteiro vai p/ o alinhador (teste do ALT-DALI)
+        _ffmpeg_decode(all_stems, out, SR, True)
+        return out, 'mix'
     mix = os.path.join(cache, 'mix.wav')
     _ffmpeg_decode(all_stems, mix, 44100, False)
     try:
@@ -58,7 +61,9 @@ def vocals_16k(folder, cache):
     return out, 'demucs' if sep == 'htdemucs' else 'roformer'
 
 # ---------------------------------------------------------------- separador (htdemucs ou modelos UVR via audio-separator)
-DEFAULT_SEPARATOR = 'htdemucs'
+import importlib.util
+# padrão: MelBand RoFormer (gabarito: linhas ruins 17,7% -> 12,1% contra o htdemucs); htdemucs se faltar o audio-separator
+DEFAULT_SEPARATOR = 'vocals_mel_band_roformer.ckpt' if importlib.util.find_spec('audio_separator') else 'htdemucs'
 MODELS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'cache', 'models')
 _uvr = {}
 
@@ -116,20 +121,49 @@ def _uvr_vocals_inproc(model, mix, out_dir):
 _bundle = torchaudio.pipelines.MMS_FA
 _model = None
 
-_tok = None
+_models = {}
 
 def _get_model():
-    """Modelo CTC escolhido por YL_ALIGNER (mms padrão; ver yl/aligners.py)."""
-    global _model, _tok
-    if _model is None:
-        from yl import aligners
+    """Modelo CTC do aligner atual (YL_ALIGNER / aligners.using; ver yl/aligners.py), carregado uma vez."""
+    from yl import aligners
+    k = aligners.name()
+    if k not in _models:
         torch.set_num_threads(max(1, os.cpu_count() - 1))
-        _model, _tok = aligners.load(DEVICE)
-    return _model
+        _models[k] = aligners.load(DEVICE)
+    return _models[k][0]
 
 def _tokenizer():
+    from yl import aligners
     _get_model()
-    return _tok
+    return _models[aligners.name()][1]
+
+def debias(raw):
+    """Desconta o viés médio do aligner atual (tempo de áudio, antes do finalize)."""
+    from yl import aligners
+    b = aligners.BIAS.get(aligners.name(), 0.0)
+    for p in raw:
+        for w in p['words']:
+            if w.get('t') is not None:
+                w['t'] -= b
+            if w.get('end') is not None:
+                w['end'] -= b
+    return raw
+
+def consensus_lrc(raw1, raw2, thr=0.5):
+    """Por linha: se os dois aligners discordam > thr s no início, fica o que está mais perto do tempo do LRCLIB.
+    No gabarito (inglês): linhas ruins 5,8% (w2v) -> 5,3% com o ALT-DSing como 2ª opinião."""
+    if len(raw1) != len(raw2) or any(len(a['words']) != len(b['words']) for a, b in zip(raw1, raw2)):
+        return raw1, 0
+    out, n = [], 0
+    for a, b in zip(raw1, raw2):
+        lrc = a.get('lrc_t')
+        sa, sb = a['words'][0]['t'], b['words'][0]['t']
+        dis = abs(sa - sb) if sa is not None and sb is not None else None
+        if lrc is not None and dis is not None and dis > thr and abs(sb - lrc) < abs(sa - lrc):
+            out.append(dict(a, words=b['words'], dis=dis)); n += 1
+        else:
+            out.append(dict(a, dis=dis))
+    return out, n
 
 def emission(wav_path, chunk_s=30, ctx_s=2):
     wav, sr = sf.read(wav_path, dtype='float32')
@@ -274,6 +308,8 @@ def finalize(phrases, delay):
               for w in ph['words']]
         out.append({'start': ws[0]['t'] - 0.15, 'end': max(w['end'] for w in ws) + 0.25,
                     'words': ws, 'lrc_t': ph['lrc_t']})
+        if ph.get('dis') is not None:                    # discordância entre os 2 aligners (s), p/ as suspeitas
+            out[-1]['dis'] = round(ph['dis'], 3)
     return fix_bounds(out)
 
 def quality(phrases, delay):
@@ -515,6 +551,7 @@ def verdict(rep):
     q, V = rep.get('quality', {}), VERDICT
     d = q.get('lrc_disagree_frac', 0)
     dd = (rep.get('lrclib') or {}).get('duration_delta_s', 0)
+    # padrão novo (w2v-960h + regras novas): o mesmo 0,12 pega 5 de 7 músicas ruins, 23 de 57 p/ revisar
     if q.get('suspect_hi_frac', 0) > V['max_suspect_hi_frac'] or d > V['max_lrc_disagree_frac']:
         return 'REVISAR'
     if dd > V['max_duration_delta_s'] and d > V['dd_disagree_frac']:
@@ -543,6 +580,8 @@ def is_instrumental(q):
 #   nível 2 (alta)  -> 70% das linhas assim estão erradas (>0,5 s); cobre 77% das linhas erradas
 #   nível 1 (média) -> 14% erradas;   nível 0 -> 3% erradas
 def line_flags(phrases, delay=0.0):
+    from yl import aligners
+    new_rules = aligners.name() != 'mms'          # regras antigas foram calibradas com os scores do MMS
     out = []
     for k, p in enumerate(phrases):
         ws = p['words']
@@ -561,6 +600,18 @@ def line_flags(phrases, delay=0.0):
         cps = sum(len(norm_word(w['text'], 'pt')) for w in ws) / dur
         gap = first - max((w.get('end') or w['t']) for w in phrases[k - 1]['words']) if k else None
         sdev = (first + delay - lrc) if lrc is not None else 0.0
+        if new_rules:
+            # calibrado no gabarito p/ w2v-960h (+ALT-DSing): nível 2 = 7% das linhas, 27% delas ruins, cobre 37% das ruins;
+            # sem flag: 2,6% ruins. 'dis' = discordância entre os 2 aligners (só quando houve 2ª opinião)
+            dis = p.get('dis')
+            if (dis is not None and dis > 0.8) or dev > 3 or (ratio is not None and ratio > 1.5) or cps > 30 or \
+                    (gap is not None and gap < 0.02):
+                out.append(2)
+            elif score < 0.05 or (dis is not None and dis > 0.3) or dev > 2 or cps < 4:
+                out.append(1)
+            else:
+                out.append(0)
+            continue
         glued_early = gap is not None and gap < 0.05 and sdev < -0.5      # 54% erradas no gabarito
         if dev > 2 or (ratio is not None and ratio > 1.5) or cps > 30 or glued_early or \
                 (score < 0.03 and ratio is not None and ratio < 0.5):

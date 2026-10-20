@@ -113,5 +113,34 @@ for grp in ('todas', 'en', 'pt'):
         out[grp][name] = r
         print(f"{name:44} {r['songs']:4} {r['words']:8} {r['median_ms']:5} {r['within_100']:5.3f} {r['within_250']:5.3f} "
               f"{r['over_1s']:5.3f} {r['bad_lines']:9.3f} {r['songs_over1_gt10pct']:7}")
+if '--bootstrap' in sys.argv:
+    # incerteza: reamostra MÚSICAS (as palavras de uma música não são independentes), 2000 vezes
+    import random
+    random.seed(1)
+    def counts(m):
+        le = list(m['line_err'].values())
+        return (sum(e > 0.5 for e in le), len(le), sum(e > 1 for e in m['errs']), len(m['errs']))
+    PAIRS = [('MMS', 'w2v-960h'), ('w2v-960h', 'Consenso w2v×ALT-DSing (base w2v)'),
+             ('w2v-960h', 'ALT-DSing'), ('MMS', 'Consenso MMS×Whisper')]
+    for grp in ('todas', 'en', 'pt'):
+        per = {name: ms for name, ms in R.get(grp, {}).items()}
+        print(f'\n== bootstrap {grp} (linhas ruins; IC 95%)')
+        for a, b in PAIRS:
+            if a not in per or b not in per:
+                continue
+            idx = [i for i, (x, y) in enumerate(zip(per[a], per[b])) if x and y]
+            ca = [counts(per[a][i]) for i in idx]; cb = [counts(per[b][i]) for i in idx]
+            def frac(c, s):
+                return sum(c[i][0] for i in s) / max(1, sum(c[i][1] for i in s))
+            diffs, va, vb = [], [], []
+            for _ in range(2000):
+                s = [random.randrange(len(idx)) for _ in idx]
+                fa, fb = frac(ca, s), frac(cb, s)
+                va.append(fa); vb.append(fb); diffs.append(fb - fa)
+            q = lambda v: (sorted(v)[int(.025 * len(v))], sorted(v)[int(.975 * len(v)) - 1])
+            all_s = range(len(idx))
+            print(f"  {a:12} {frac(ca, all_s):.3f} [{q(va)[0]:.3f}–{q(va)[1]:.3f}]  ->  {b[:34]:34} {frac(cb, all_s):.3f} "
+                  f"[{q(vb)[0]:.3f}–{q(vb)[1]:.3f}]  diferença {frac(cb, all_s) - frac(ca, all_s):+.3f} "
+                  f"[{q(diffs)[0]:+.3f} a {q(diffs)[1]:+.3f}]  ({len(idx)} músicas)")
 if '--json' in sys.argv:
     json.dump(out, open(sys.argv[sys.argv.index('--json') + 1], 'w', encoding='utf-8'), ensure_ascii=False, indent=1)

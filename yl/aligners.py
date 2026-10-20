@@ -19,8 +19,42 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 HF_REPO = 'facebook/wav2vec2-large-960h-lv60-self'
 HF_CACHE = os.path.join(ROOT, 'cache', 'models', 'hf')
 
+import contextlib, importlib.util
+
+# padrão: wav2vec2-960h (melhor no gabarito: linhas ruins 12,1% -> 5,7% contra o MMS); MMS se faltar o transformers
+DEFAULT = 'w2v-960h' if importlib.util.find_spec('transformers') else 'mms'
+# viés mediano medido no gabarito (s; positivo = atrasado): descontado de todas as palavras
+BIAS = {'mms': -0.020, 'w2v-960h': 0.013, 'alt-dsing': 0.009, 'alt-dali': 0.018}
+# 2ª opinião por idioma (consenso por linha com desempate pelo LRCLIB); YL_SECOND=0 desliga
+SECOND = {'en': 'alt-dsing'}
+_override = None
+
 def name():
-    return os.environ.get('YL_ALIGNER') or 'mms'
+    return _override or os.environ.get('YL_ALIGNER') or DEFAULT
+
+@contextlib.contextmanager
+def using(n):
+    """Troca o aligner dentro de um bloco (o modelo de cada um fica carregado em cache)."""
+    global _override
+    old, _override = _override, n
+    try:
+        yield
+    finally:
+        _override = old
+
+def available(n):
+    if n in ('mms',):
+        return True
+    if n == 'w2v-960h':
+        return importlib.util.find_spec('transformers') is not None
+    return bool(glob.glob(os.path.join(ROOT, 'cache', 'models', 'alt', n.split('-')[1], 'CKPT+*', 'wav2vec2.ckpt')))
+
+def second_for(lang):
+    """Só no modo padrão: com YL_ALIGNER explícito (experimentos) roda um modelo só, a não ser com YL_SECOND=1."""
+    if os.environ.get('YL_SECOND') == '0' or (os.environ.get('YL_ALIGNER') and os.environ.get('YL_SECOND') != '1'):
+        return None
+    n = SECOND.get(lang)
+    return n if n and n != name() and available(n) else None
 
 class _Tok:
     """Mapa de caracteres (minúsculos a-z e ') -> ids do modelo; opcionalmente acrescenta o separador de palavra."""
@@ -50,7 +84,9 @@ class _W2V(torch.nn.Module):
             cfg = Wav2Vec2Config.from_pretrained(HF_REPO, cache_dir=HF_CACHE)
             self.w2v = Wav2Vec2Model(cfg)
             d = glob.glob(os.path.join(ROOT, 'cache', 'models', 'alt', kind.split('-')[1], 'CKPT+*'))
-            d = sorted(d, key=lambda p: ('end-of-epoch: true' in open(os.path.join(p, 'CKPT.yaml')).read(), p))[-1]
+            # YL_ALT_CKPT=mid usa o checkpoint do meio da época (DALI tem dois); padrão: o de fim de época
+            pref = os.environ.get('YL_ALT_CKPT', 'end')
+            d = sorted(d, key=lambda p: (('end-of-epoch: true' in open(os.path.join(p, 'CKPT.yaml')).read()) == (pref == 'end'), p))[-1]
             sd = torch.load(os.path.join(d, 'wav2vec2.ckpt'), map_location='cpu', weights_only=True)
             sd = {k[6:]: v for k, v in sd.items() if k.startswith('model.')}
             missing, unexpected = self.w2v.load_state_dict(sd, strict=False)
