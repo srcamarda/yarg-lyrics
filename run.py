@@ -61,7 +61,7 @@ def process(folder, do_eval=False, force=False):
     local = os.path.join(folder, 'lyrics.txt')                 # letra manual tem prioridade
     rec = None
     if os.path.exists(local):
-        lines, src = lyrics.parse_lrc(open(local, encoding='utf-8-sig').read()), 'local'
+        lines, src = lyrics.parse_lrc(lyrics.read_text(local)), 'local'
     else:
         rec = lyrics.fetch(artist, title, song_len_s(ini), os.path.join(cd, 'lrclib.json'))
         lines, src = lyrics.from_record(rec)
@@ -99,6 +99,11 @@ def process(folder, do_eval=False, force=False):
     json.dump(phrases, open(os.path.join(cd, 'aligned.json'), 'w', encoding='utf-8'), ensure_ascii=False)
     ext = '.chart' if ch.kind == 'chart' else '.mid'
     if do_eval:
+        # guarda o resultado por configuração (voz de stem/mix + separador) p/ experimentos offline (tools/exp_*.py)
+        tag = ('mix_' if os.environ.get('YL_IGNORE_VOCAL_STEM') == '1' else 'stem_') + \
+              re.sub(r'\W+', '', os.path.splitext(align.separator())[0])[:24]
+        json.dump({'vocals_wav': wav, 'delay': delay, 'lang': lang, 'phrases': phrases},
+                  open(os.path.join(cd, f'aligned_eval_{tag}.json'), 'w', encoding='utf-8'), ensure_ascii=False)
         ref = charts.lyric_events_to_words(ch.read_lyrics()[0], ch.tmap)
         rep['eval'] = evaluate(ref, phrases)
         out = os.path.join(cd, 'notes.autolyrics' + ext)

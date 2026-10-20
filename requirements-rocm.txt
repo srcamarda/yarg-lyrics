@@ -14,3 +14,9 @@ sphn
 huggingface-hub
 safetensors
 
+
+# --- separador RoFormer (YL_SEPARATOR=vocals_mel_band_roformer.ckpt) e experimento com Whisper
+# Instalar SEM deixar o pip trocar o torch do ROCm:
+#   pip install --no-deps audio-separator==0.47.1 stable-ts==2.19.1 openai-whisper==20250625
+#   pip install --no-deps beartype==0.18.5 rotary-embedding-torch==0.6.5 samplerate==0.1.0 onnx2torch-py313 diffq-fixed
+#   pip install -c <(echo numpy==<versão atual>) librosa ml-collections onnx-weekly pydub resampy scipy six onnxruntime audioread tiktoken more-itertools

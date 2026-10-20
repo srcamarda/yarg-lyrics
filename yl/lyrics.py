@@ -5,6 +5,14 @@ import requests
 API = 'https://lrclib.net/api'
 UA = {'User-Agent': 'yarg-lyrics/0.2 (https://github.com/)'}
 
+def read_text(path):
+    """Lê lyrics.txt em UTF-8 (com/sem BOM); cai p/ cp1252 (Bloco de Notas antigo) se não for UTF-8."""
+    raw = open(path, 'rb').read()
+    try:
+        return raw.decode('utf-8-sig')
+    except UnicodeDecodeError:
+        return raw.decode('cp1252', errors='replace')
+
 def _norm(s):
     s = unicodedata.normalize('NFD', s or '')
     s = ''.join(c for c in s if unicodedata.category(c) != 'Mn').lower()

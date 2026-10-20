@@ -11,3 +11,4 @@ ui_state.json
 ui_state.json.tmp
 ui.log
 ui.err
+logs/

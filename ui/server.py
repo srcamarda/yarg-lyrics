@@ -222,7 +222,7 @@ def get_lyrics_text(folder: str):
     """Texto para edição: lyrics.txt se existir; senão o LRC do LRCLIB usado na última execução."""
     p = os.path.join(folder, 'lyrics.txt')
     if os.path.exists(p):
-        return {'source': 'manual', 'text': open(p, encoding='utf-8-sig').read()}
+        return {'source': 'manual', 'text': lyrics.read_text(p)}
     lp = os.path.join(pipeline.cache_dir(folder), 'lrclib.json')
     if os.path.exists(lp):
         rec = json.load(open(lp, encoding='utf-8')) or {}

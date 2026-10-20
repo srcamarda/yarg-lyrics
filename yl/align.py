@@ -25,27 +25,92 @@ def stems(folder):
 def vocals_16k(folder, cache):
     """Gera cache/vocals16k.wav. Usa stem 'vocals' se existir; senão Demucs no mix completo."""
     ignore_stem = os.environ.get('YL_IGNORE_VOCAL_STEM') == '1'   # simula músicas sem stem de voz
-    out = os.path.join(cache, 'vocals16k_mix.wav' if ignore_stem else 'vocals16k.wav')
-    if os.path.exists(out):
-        return out, 'cache'
     all_stems = stems(folder)
     big = max((os.path.getsize(p) for p in all_stems), default=0)
     # stems de voz minúsculos (ex.: vocals_2.ogg de 23 KB, quase silêncio) não contam como voz
     voc = [] if ignore_stem else [p for p in all_stems if os.path.basename(p).lower().startswith('vocals')
                                   and os.path.getsize(p) >= 0.2 * big]
     if voc:
-        _ffmpeg_decode(voc, out, SR, True)
-        return out, 'stem'
+        out = os.path.join(cache, 'vocals16k.wav')
+        if not os.path.exists(out):
+            _ffmpeg_decode(voc, out, SR, True)
+            return out, 'stem'
+        return out, 'cache'
+    sep = separator()
+    tag = '' if sep == 'htdemucs' else '_' + re.sub(r'\W+', '', os.path.splitext(sep)[0])[:24]
+    out = os.path.join(cache, ('vocals16k_mix' if ignore_stem else 'vocals16k') + tag + '.wav')
+    if os.path.exists(out):
+        return out, 'cache'
     mix = os.path.join(cache, 'mix.wav')
     _ffmpeg_decode(all_stems, mix, 44100, False)
-    subprocess.run([sys.executable, '-m', 'demucs', '--two-stems=vocals', '-n', 'htdemucs', '-d', DEVICE,
-                    '-o', os.path.join(cache, 'demucs'), mix], check=True,
-                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    dv = os.path.join(cache, 'demucs', 'htdemucs', 'mix', 'vocals.wav')
-    _ffmpeg_decode([dv], out, SR, True)
-    os.remove(mix)
-    shutil.rmtree(os.path.join(cache, 'demucs'), ignore_errors=True)
-    return out, 'demucs'
+    try:
+        if sep == 'htdemucs':
+            subprocess.run([sys.executable, '-m', 'demucs', '--two-stems=vocals', '-n', 'htdemucs', '-d', DEVICE,
+                            '-o', os.path.join(cache, 'demucs'), mix], check=True,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            dv = os.path.join(cache, 'demucs', 'htdemucs', 'mix', 'vocals.wav')
+        else:
+            dv = _uvr_vocals(sep, mix, os.path.join(cache, 'demucs'))
+        _ffmpeg_decode([dv], out, SR, True)
+    finally:
+        os.remove(mix)
+        shutil.rmtree(os.path.join(cache, 'demucs'), ignore_errors=True)
+    return out, 'demucs' if sep == 'htdemucs' else 'roformer'
+
+# ---------------------------------------------------------------- separador (htdemucs ou modelos UVR via audio-separator)
+DEFAULT_SEPARATOR = 'htdemucs'
+MODELS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'cache', 'models')
+_uvr = {}
+
+def separator():
+    """YL_SEPARATOR=htdemucs (padrão) ou um arquivo de modelo do audio-separator (ex.: vocals_mel_band_roformer.ckpt)."""
+    return os.environ.get('YL_SEPARATOR') or DEFAULT_SEPARATOR
+
+def _uvr_vocals(model, mix, out_dir):
+    """Separa num subprocesso novo: no ROCm/Windows o mesmo Separator reutilizado fica ~4,5x mais lento
+    a partir da 2ª música (e carregar o modelo custa só ~2 s)."""
+    os.makedirs(out_dir, exist_ok=True)
+    err = '?'
+    for _ in range(3):   # às vezes a GPU devolve lixo (sobretudo na 1ª chamada logo após outro processo): tenta de novo
+        r = subprocess.run([sys.executable, '-m', 'yl.align', '--uvr', model, mix, out_dir],
+                           cwd=os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                           capture_output=True, text=True, encoding='utf-8', errors='replace')
+        lines = [l for l in r.stdout.splitlines() if l.startswith('UVR_OUT ')]
+        if not r.returncode and lines:
+            return lines[-1][8:]
+        err = (r.stderr.strip().splitlines() or ['?'])[-1][:200]
+    raise RuntimeError('separador falhou: ' + err)
+
+def _uvr_vocals_inproc(model, mix, out_dir):
+    os.makedirs(out_dir, exist_ok=True)
+    if model not in _uvr:   # carrega o modelo uma vez por processo
+        import logging
+        from audio_separator.separator import Separator
+        kw = {}
+        if os.environ.get('YL_SEP_OVERLAP'):   # padrão da biblioteca (8); valores menores deixam MAIS lento no Roformer
+            kw['mdxc_params'] = {'segment_size': 256, 'override_model_segment_size': False, 'batch_size': 1,
+                                 'overlap': int(os.environ['YL_SEP_OVERLAP']), 'pitch_shift': 0}
+        s = Separator(model_file_dir=MODELS_DIR, output_dir=out_dir, output_single_stem='Vocals',
+                      output_format='WAV', log_level=logging.WARNING, **kw)
+        s.load_model(model_filename=model)
+        _uvr[model] = s
+    s = _uvr[model]
+    s.output_dir = out_dir
+    if getattr(s, 'model_instance', None) is not None:
+        s.model_instance.output_dir = out_dir
+    files = s.separate(mix, custom_output_names={'Vocals': 'vocals'})
+    p = os.path.join(out_dir, os.path.basename(files[0]))
+    p = p if os.path.exists(p) else files[0]
+    # GPU em estado ruim (ex.: depois de um processo morto no meio) devolve lixo rápido em vez de erro
+    # (saída sem relação com a entrada: correlação ~0 com o mix; voz de verdade dá >0.1)
+    v, _ = sf.read(p, dtype='float32')
+    m, _ = sf.read(mix, dtype='float32')
+    v, m = v.reshape(len(v), -1).mean(1), m.reshape(len(m), -1).mean(1)
+    n = min(len(v), len(m))
+    corr = float(np.corrcoef(v[:n], m[:n])[0, 1]) if n and v[:n].std() > 0 else 0.0
+    if not np.isfinite(v).all() or not corr > 0.05:
+        raise RuntimeError(f'saída inválida do separador (correlação com o mix {corr:+.3f})')
+    return p
 
 # ---------------------------------------------------------------- modelo
 _bundle = torchaudio.pipelines.MMS_FA
@@ -497,3 +562,8 @@ def line_flags(phrases, delay=0.0):
         else:
             out.append(0)
     return out
+
+
+if __name__ == '__main__' and len(sys.argv) == 5 and sys.argv[1] == '--uvr':
+    # worker do separador (ver _uvr_vocals): python -m yl.align --uvr <modelo> <mix.wav> <pasta_saida>
+    print('UVR_OUT ' + _uvr_vocals_inproc(*sys.argv[2:5]), flush=True)
