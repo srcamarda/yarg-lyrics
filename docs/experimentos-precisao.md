@@ -55,3 +55,42 @@ Conclusões
 - ALT-DALI foi muito mal com voz separada — foi treinado com música mixada; não testado com o mix original.
 - Whisper deixa de ajudar quando a base é o w2v.
 - Viés mediano: MMS −20 ms, w2v +13 ms, ALT-DSing +9 ms, Whisper −290 ms.
+
+## Rodada 3: padrão novo, ALT-DALI, calibração e validação (20/out/2026)
+
+**Padrão novo** (sem variáveis de ambiente): RoFormer (só sem stem de voz) + wav2vec2-960h, viés de cada modelo descontado,
+e nas músicas em inglês o ALT-DSing como 2ª opinião (por linha: discordância > 0,5 s -> fica o mais perto do LRCLIB).
+Modo antigo: `YL_SEPARATOR=htdemucs YL_ALIGNER=mms` (as regras antigas de suspeita voltam junto com o MMS).
+
+**ALT-DALI** (50 músicas en, linhas ruins): voz separada 48,5% (fim de época) / 25,4% (meio de época);
+mix original 64,5% / 51,8%. Não serve para alinhar. Mix sem separação piora todos (w2v 61,1%, MMS 28,9%).
+
+**Incerteza** (bootstrap por música, 56 músicas): MMS -> w2v −6,4 p.p. [−9,2; −3,9] (sólido);
+w2v -> consenso −0,5 p.p. [−1,0; 0,0] (marginal); português com 6 músicas: IC de ~0,4% a ~19% (inconclusivo).
+
+**Detector de instrumental**: 11 instrumentais conhecidas: w2v ≤ 0,11 caractere/s em 10, 0,48 na outra;
+músicas com voz ≥ 0,79. Limiar 0,5 mantido. A marcada com .nolyrics engana todos os modelos.
+
+**Suspeitas** recalibradas p/ o w2v (regras antigas: nível 2 só 18% de acerto / 15% de cobertura no modelo novo).
+Nível 2: discordância entre os aligners > 0,8 s, desvio do LRCLIB > 3 s, duração > 1,5× a do LRCLIB, > 30 caracteres/s
+ou linha colada (< 0,02 s) na anterior. Nível 1: score < 0,05, discordância > 0,3 s, desvio > 2 s ou < 4 caracteres/s.
+Veredito: REVISAR se > 12% das linhas em nível 2 (mesmo limiar de antes).
+
+### Validação (gold_holdout.json: 100 músicas novas, nunca usadas p/ ajustar nada)
+
+| | antigo (htdemucs+MMS) | padrão novo |
+|---|---|---|
+| **Voz do mix** (97 músicas): linhas ruins | 15,7% | 6,4% |
+| palavras > 1 s | 13,0% | 4,7% |
+| palavras ≤ 100 ms | 72,4% | 84,6% |
+| músicas com >10% erradas | 35 | 16 |
+| **Uso normal, com stem** (98 músicas): linhas ruins | 12,1% | 6,2% |
+| palavras > 1 s | 9,5% | 4,6% |
+| palavras ≤ 100 ms | 76,9% | 85,1% |
+| músicas com >10% erradas | 33 | 13 |
+| português (6 músicas, stem): linhas ruins | 6,4% | 4,1% |
+
+Gabarito (stem): 12,2% -> 5,4% linhas ruins; músicas ruins 21 -> 9.
+
+Suspeitas na validação (stem): nível 2 marca 11% das linhas, 29% delas ruins, cobre 52% das ruins; sem flag 2,4% ruins.
+Veredito: 30 de 98 REVISAR, pega 8 de 13 músicas ruins (antigo: 47 REVISAR, 30 de 33 ruins).
