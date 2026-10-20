@@ -146,8 +146,32 @@ def pick_folder(initial: str = Body('', embed=True)):
 # ------------------------------------------------------------------ fila de execução
 JOB = {'running': False, 'done': 0, 'total': 0, 'current': None, 'cancel': False, 'log': []}
 
+def _presep(items):
+    """1ª passada: separa as vozes que faltam SEM os modelos de alinhamento na GPU. Com eles carregados (≈9 GB no
+    processo da interface) o separador ia p/ a memória compartilhada e levava ~4 min por música em vez de ~50 s."""
+    todo = []
+    for f in items:
+        try:
+            if os.path.exists(os.path.join(f, '.nolyrics')) or charts.open_chart(f).has_lyrics():
+                continue
+        except Exception:
+            continue
+        todo.append(f)
+    if not todo:
+        return
+    align.unload_models()
+    for i, f in enumerate(todo, 1):
+        if JOB['cancel']:
+            return
+        JOB['current'] = f'separando voz {i}/{len(todo)}: {os.path.basename(f)}'
+        try:
+            align.vocals_16k(f, pipeline.cache_dir(f))
+        except Exception:
+            traceback.print_exc()                      # a 2ª passada tenta de novo e registra o erro
+
 def worker(items, force):
     try:
+        _presep(items)
         for f in items:
             if JOB['cancel']:
                 break

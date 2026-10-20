@@ -53,6 +53,7 @@ def vocals_16k(folder, cache):
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             dv = os.path.join(cache, 'demucs', 'htdemucs', 'mix', 'vocals.wav')
         else:
+            free_gpu_cache()        # o separador roda em outro processo: não deixa a VRAM presa no cache deste
             dv = _uvr_vocals(sep, mix, os.path.join(cache, 'demucs'))
         _ffmpeg_decode([dv], out, SR, True)
     finally:
@@ -66,6 +67,19 @@ import importlib.util
 DEFAULT_SEPARATOR = 'vocals_mel_band_roformer.ckpt' if importlib.util.find_spec('audio_separator') else 'htdemucs'
 MODELS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'cache', 'models')
 _uvr = {}
+
+def free_gpu_cache():
+    """Devolve ao driver a VRAM que o PyTorch guarda em cache (ativações de músicas anteriores).
+    Num processo longo (a interface) o cache chegava a 4+ GB e jogava o separador p/ a memória compartilhada (4x mais lento)."""
+    if torch.cuda.is_available():
+        import gc
+        gc.collect()
+        torch.cuda.empty_cache()
+
+def unload_models():
+    """Tira os modelos de alinhamento da GPU (antes de separar várias vozes num processo longo, como a interface)."""
+    _models.clear()
+    free_gpu_cache()
 
 def separator():
     """YL_SEPARATOR=htdemucs (padrão) ou um arquivo de modelo do audio-separator (ex.: vocals_mel_band_roformer.ckpt)."""
@@ -185,6 +199,7 @@ def emission(wav_path, chunk_s=30, ctx_s=2):
             out.append(em[f0:min(f1, em.shape[0])])
             s = e
     em = torch.cat(out)
+    free_gpu_cache()
     ratio = n / SR / em.shape[0]
     _voice_stats(em, wav.numpy(), ratio)
     return em, ratio, n / SR
