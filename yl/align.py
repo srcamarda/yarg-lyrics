@@ -90,7 +90,10 @@ def _uvr_vocals(model, mix, out_dir):
     a partir da 2ª música (e carregar o modelo custa só ~2 s)."""
     os.makedirs(out_dir, exist_ok=True)
     err = '?'
-    for _ in range(3):   # às vezes a GPU devolve lixo (sobretudo na 1ª chamada logo após outro processo): tenta de novo
+    import time
+    for attempt in range(4):   # às vezes a GPU devolve lixo (sobretudo na 1ª chamada logo após outro processo): tenta de novo
+        if attempt:
+            time.sleep(20 * attempt)   # o estado ruim da GPU dura alguns minutos; tentar na hora não adianta
         r = subprocess.run([sys.executable, '-m', 'yl.align', '--uvr', model, mix, out_dir],
                            cwd=os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                            capture_output=True, text=True, encoding='utf-8', errors='replace')

@@ -23,6 +23,35 @@ def call(path, body=None):
     with urllib.request.urlopen(req, timeout=60) as r:
         return json.loads(r.read())
 
+def restart_server():
+    """Servidor novo antes de cada pasta: depois de alinhar, o processo da interface segura ~2,4 GB de VRAM e o
+    separador (pico ~8 GB) passava p/ a memória compartilhada (~4 min/música em vez de ~1). Novo = 0 GB até alinhar."""
+    import subprocess
+    out = subprocess.run(['powershell', '-NoProfile', '-Command',
+                          '(Get-NetTCPConnection -LocalPort 8765 -State Listen -ErrorAction SilentlyContinue).OwningProcess'],
+                         capture_output=True, text=True).stdout.split()
+    for pid in set(out):
+        subprocess.run(['powershell', '-NoProfile', '-Command',
+                        f'$p=(Get-CimInstance Win32_Process -Filter "ProcessId={pid}").ParentProcessId; '
+                        f'Stop-Process -Id {pid} -Force -ErrorAction SilentlyContinue; '
+                        f'if ($p) {{ Stop-Process -Id $p -Force -ErrorAction SilentlyContinue }}'], capture_output=True)
+    time.sleep(3)
+    env = dict(os.environ, PYTHONIOENCODING='utf-8')
+    for k in ('YL_ALIGNER', 'YL_SEPARATOR', 'YL_IGNORE_VOCAL_STEM', 'YL_SECOND', 'YL_ALT_CKPT'):
+        env.pop(k, None)                               # o servidor sempre no padrão
+    py = os.path.join(ROOT, '.venv-rocm', 'Scripts', 'python.exe')
+    subprocess.Popen([py, os.path.join(ROOT, 'ui', 'server.py')], cwd=ROOT, env=env,
+                     stdout=open(os.path.join(ROOT, 'logs', 'ui.log'), 'a', encoding='utf-8'),
+                     stderr=open(os.path.join(ROOT, 'logs', 'ui.err'), 'a', encoding='utf-8'),
+                     creationflags=0x08000000)         # CREATE_NO_WINDOW
+    for _ in range(60):
+        time.sleep(2)
+        try:
+            call('/api/job'); return
+        except Exception:
+            pass
+    raise RuntimeError('servidor não subiu')
+
 def todo(folder):
     out = []
     for f in batch.find_songs(folder):
@@ -52,6 +81,7 @@ for d, l in plan:
         continue
     while call('/api/job')['running']:
         time.sleep(30)
+    restart_server()
     log(f'== {d}: {len(l)} músicas')
     call('/api/run', {'folders': l, 'force': False})
     time.sleep(10)
