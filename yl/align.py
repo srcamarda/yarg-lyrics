@@ -54,7 +54,16 @@ def vocals_16k(folder, cache):
             dv = os.path.join(cache, 'demucs', 'htdemucs', 'mix', 'vocals.wav')
         else:
             free_gpu_cache()        # o separador roda em outro processo: não deixa a VRAM presa no cache deste
-            dv = _uvr_vocals(sep, mix, os.path.join(cache, 'demucs'))
+            try:
+                dv = _uvr_vocals(sep, mix, os.path.join(cache, 'demucs'))
+            except RuntimeError:
+                # o RoFormer às vezes falha sempre numa música específica (ex.: Spanish Castle Magic, GH1):
+                # plano B com o htdemucs em vez de ficar sem letra
+                sep = 'htdemucs'
+                subprocess.run([sys.executable, '-m', 'demucs', '--two-stems=vocals', '-n', 'htdemucs', '-d', DEVICE,
+                                '-o', os.path.join(cache, 'demucs'), mix], check=True,
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                dv = os.path.join(cache, 'demucs', 'htdemucs', 'mix', 'vocals.wav')
         _ffmpeg_decode([dv], out, SR, True)
     finally:
         os.remove(mix)
@@ -133,7 +142,9 @@ def _uvr_vocals_inproc(model, mix, out_dir):
     # voz baixa no mix (ou quase instrumental) também dá correlação baixa (ex.: +0,01/+0,035, iguais a cada tentativa);
     # aí o ENVELOPE de energia ainda acompanha o do mix. A saída inválida da GPU não acompanha nada (~0).
     env_corr = 0.0
-    if n and corr <= 0.05:
+    # limiares: a saída inválida da GPU deu correlação ~0,00 e envelope ~-0,02; voz de verdade baixa no mix:
+    # Seven Seas of Rhye +0,050/+0,129, Scatterbrain +0,035, Spanish Castle Magic +0,010
+    if n and corr <= 0.03:
         w = 4410                                             # janelas de 0,1 s
         k = n // w
         if k > 10:
@@ -141,7 +152,7 @@ def _uvr_vocals_inproc(model, mix, out_dir):
             em_ = np.sqrt((m[:k * w].reshape(k, w) ** 2).mean(1))
             if ev.std() > 0 and em_.std() > 0:
                 env_corr = float(np.corrcoef(ev, em_)[0, 1])
-    if not np.isfinite(v).all() or not (corr > 0.05 or env_corr > 0.2):
+    if not np.isfinite(v).all() or not (corr > 0.03 or env_corr > 0.08):
         raise RuntimeError(f'saída inválida do separador (correlação com o mix {corr:+.3f}, envelope {env_corr:+.3f})')
     return p
 
