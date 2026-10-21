@@ -149,11 +149,22 @@ JOB = {'running': False, 'done': 0, 'total': 0, 'current': None, 'cancel': False
 def _presep(items):
     """1ª passada: separa as vozes que faltam SEM os modelos de alinhamento na GPU. Com eles carregados (≈9 GB no
     processo da interface) o separador ia p/ a memória compartilhada e levava ~4 min por música em vez de ~50 s."""
+    from yl import lyrics as lyr
     todo = []
-    for f in items:
+    for i, f in enumerate(items, 1):
+        if JOB['cancel']:
+            return
+        JOB['current'] = f'procurando letra {i}/{len(items)}: {os.path.basename(f)}'
         try:
             if os.path.exists(os.path.join(f, '.nolyrics')) or charts.open_chart(f).has_lyrics():
                 continue
+            if not os.path.exists(os.path.join(f, 'lyrics.txt')):   # sem letra no LRCLIB: não vale separar a voz
+                ini = charts.read_ini(f)
+                rec = lyr.fetch(ini.get('artist', ''), ini.get('name', ''), pipeline.song_len_s(ini),
+                                os.path.join(pipeline.cache_dir(f), 'lrclib.json'))
+                lines, _ = lyr.from_record(rec)
+                if not lines:
+                    continue
         except Exception:
             continue
         todo.append(f)
