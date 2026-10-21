@@ -130,8 +130,19 @@ def _uvr_vocals_inproc(model, mix, out_dir):
     v, m = v.reshape(len(v), -1).mean(1), m.reshape(len(m), -1).mean(1)
     n = min(len(v), len(m))
     corr = float(np.corrcoef(v[:n], m[:n])[0, 1]) if n and v[:n].std() > 0 else 0.0
-    if not np.isfinite(v).all() or not corr > 0.05:
-        raise RuntimeError(f'saída inválida do separador (correlação com o mix {corr:+.3f})')
+    # voz baixa no mix (ou quase instrumental) também dá correlação baixa (ex.: +0,01/+0,035, iguais a cada tentativa);
+    # aí o ENVELOPE de energia ainda acompanha o do mix. A saída inválida da GPU não acompanha nada (~0).
+    env_corr = 0.0
+    if n and corr <= 0.05:
+        w = 4410                                             # janelas de 0,1 s
+        k = n // w
+        if k > 10:
+            ev = np.sqrt((v[:k * w].reshape(k, w) ** 2).mean(1))
+            em_ = np.sqrt((m[:k * w].reshape(k, w) ** 2).mean(1))
+            if ev.std() > 0 and em_.std() > 0:
+                env_corr = float(np.corrcoef(ev, em_)[0, 1])
+    if not np.isfinite(v).all() or not (corr > 0.05 or env_corr > 0.2):
+        raise RuntimeError(f'saída inválida do separador (correlação com o mix {corr:+.3f}, envelope {env_corr:+.3f})')
     return p
 
 # ---------------------------------------------------------------- modelo
