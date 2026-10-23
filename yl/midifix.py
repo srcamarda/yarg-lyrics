@@ -13,7 +13,18 @@ def split(data):
     hdr = data[8:8 + hl]
     i, chunks = 8 + hl, []
     while i + 8 <= len(data):
+        if data[i:i + 4] != b'MTrk':
+            # lixo entre/depois das trilhas (ex.: rip do GH3 "All Nightmare Long" tem ~50 KB de eventos soltos sem
+            # cabeçalho depois da última trilha). Não é trilha: pula até o próximo 'MTrk' em vez de copiá-lo,
+            # senão ele entra na contagem do cabeçalho e o YARG acusa o arquivo de corrompido.
+            j = data.find(b'MTrk', i + 1)
+            if j < 0:
+                break
+            i = j
+            continue
         ln = struct.unpack('>I', data[i + 4:i + 8])[0]
+        if i + 8 + ln > len(data):
+            break                                  # trilha truncada no fim do arquivo: ignora
         chunks.append(data[i:i + 8 + ln])
         i += 8 + ln
     return hdr, chunks
