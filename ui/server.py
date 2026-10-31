@@ -8,6 +8,7 @@ import os, sys, json, glob, threading, subprocess, re, webbrowser, traceback
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Body
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -18,11 +19,10 @@ from yl import charts, batch, align
 
 STATE_PATH = os.path.join(ROOT, 'ui_state.json')
 STATIC = os.path.join(ROOT, 'ui', 'static')
-app = FastAPI(title='yarg-lyrics')
 
 
-@app.on_event('startup')
-async def _quiet_connection_resets():
+@asynccontextmanager
+async def _lifespan(app):
     """No Windows, o asyncio registra como erro quando o navegador aborta um download de áudio
     (ao pular na música ou trocar Música/Só voz). É inofensivo: ignora só esse caso."""
     import asyncio
@@ -32,6 +32,9 @@ async def _quiet_connection_resets():
             return
         lp.default_exception_handler(ctx)
     loop.set_exception_handler(handler)
+    yield
+
+app = FastAPI(title='yarg-lyrics', lifespan=_lifespan)
 lock = threading.RLock()
 
 # ------------------------------------------------------------------ estado persistente
@@ -44,16 +47,18 @@ def load_state():
     for p in sorted(glob.glob(os.path.join(ROOT, 'reports', '*.jsonl'))):
         if p.endswith('-eval.jsonl'):
             continue
-        for line in open(p, encoding='utf-8'):
-            try:
-                r = json.loads(line)
-            except ValueError:
-                continue
-            if r.get('folder') and not str(r.get('status', '')).startswith('skip'):
-                st.setdefault(_key(r['folder']), {})['report'] = r
+        with open(p, encoding='utf-8') as fh:
+            for line in fh:
+                try:
+                    r = json.loads(line)
+                except ValueError:
+                    continue
+                if r.get('folder') and not str(r.get('status', '')).startswith('skip'):
+                    st.setdefault(_key(r['folder']), {})['report'] = r
     if os.path.exists(STATE_PATH):
-        for k, v in json.load(open(STATE_PATH, encoding='utf-8')).items():
-            st.setdefault(k, {}).update(v)
+        with open(STATE_PATH, encoding='utf-8') as fh:
+            for k, v in json.load(fh).items():
+                st.setdefault(k, {}).update(v)
     return st
 
 STATE = load_state()
@@ -61,7 +66,8 @@ STATE = load_state()
 def save_state():
     with lock:
         tmp = STATE_PATH + '.tmp'
-        json.dump(STATE, open(tmp, 'w', encoding='utf-8'), ensure_ascii=False)
+        with open(tmp, 'w', encoding='utf-8') as fh:
+            json.dump(STATE, fh, ensure_ascii=False)
         os.replace(tmp, STATE_PATH)
 
 # ------------------------------------------------------------------ listagem

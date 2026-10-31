@@ -1,5 +1,7 @@
 """Separação de voz (Demucs) + alinhamento forçado por palavra (MMS_FA, multilíngue)."""
 import os, re, subprocess, sys, shutil, statistics, unicodedata
+from yl import quiet
+quiet.apply()                     # antes do torch/transformers: avisos conhecidos e inofensivos fora do console
 import numpy as np
 import torch, torchaudio
 import soundfile as sf

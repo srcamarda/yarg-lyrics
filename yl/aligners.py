@@ -77,6 +77,8 @@ class _W2V(torch.nn.Module):
     def __init__(self, kind):
         super().__init__()
         from transformers import Wav2Vec2ForCTC, Wav2Vec2Model, Wav2Vec2Config
+        from yl import quiet
+        quiet.transformers_loaded()
         self.kind = kind
         if kind == 'w2v-960h':
             self.net = Wav2Vec2ForCTC.from_pretrained(HF_REPO, cache_dir=HF_CACHE)
