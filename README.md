@@ -1,55 +1,50 @@
 # yarg-lyrics
 
-**English summary.** Automatically adds synced lyrics to [YARG](https://yarg.in) / Clone Hero song charts.
-For each song folder it fetches lyrics from [LRCLIB](https://lrclib.net), isolates the vocals
-(MelBand RoFormer, htdemucs as fallback), force-aligns the text word by word (wav2vec2-large-960h, with
-ALT-DSing as a second opinion for English songs) and writes the result as `notes.autolyrics.chart` /
-`notes.autolyrics.mid`, never touching your original chart until you apply it. A local web UI lets you
-review each song karaoke-style, fix timing, paste lyrics manually and apply/restore. Supports English and
-Portuguese. Built and tested on Windows 11 with an AMD GPU (ROCm); CPU and NVIDIA should work but are less tested.
+Automatically adds synced lyrics to [YARG](https://yarg.in) / Clone Hero song charts.
+
+For each song folder it fetches lyrics from [LRCLIB](https://lrclib.net), isolates the vocals, force-aligns
+the text word by word and writes the result as `notes.autolyrics.chart` / `notes.autolyrics.mid`, never
+touching your original chart until you apply it. A local web UI lets you review each song karaoke-style,
+fix timing, paste lyrics manually and apply/restore. Works with English and Portuguese songs.
+
 On a held-out set of 98 songs, lines more than 0.5 s off dropped from 12.1% (htdemucs + MMS) to 6.2%.
 
-> No songs, audio, charts or lyrics are included. You use your own library, and lyrics are fetched
-> from LRCLIB and written only into your local files.
+> No songs, audio, charts or lyrics are included. You use your own library; lyrics are fetched from
+> LRCLIB and written only into your local files.
 
----
+## How it works
 
-Busca letras no [LRCLIB](https://lrclib.net), separa a voz, alinha palavra a palavra e grava a letra
-no chart (`notes.chart` / `notes.mid`) no padrão Clone Hero / YARG. Funciona em inglês e português.
+1. **Lyrics:** a `lyrics.txt` in the song folder (if present) or LRCLIB (searched by artist, title and duration).
+2. **Vocals:** uses the song's vocal stem if it has one; otherwise separates the vocals from the mix with
+   **MelBand RoFormer** (fallback: **htdemucs**).
+3. **Alignment:** **wav2vec2-large-960h**, line by line, anchored on the LRC timestamps. For English songs,
+   **ALT-DSing** (a model trained on singing) gives a second opinion: where the two disagree by more than
+   0.5 s on a line's start, the one closer to the LRCLIB timestamp wins.
+4. **Quality:** each line gets a suspicion level (0–2) and the song is marked `ok` or `REVISAR` (needs review);
+   songs with no vocals in the audio are detected as instrumentals.
+5. **Output:** `notes.autolyrics.*` next to the original. **Apply** replaces the chart (the original is kept as
+   `notes.*.bak`); **Restore** undoes it.
 
-## Como funciona
+Results, methodology and everything that was tested (Whisper, ALT-DALI, model consensus, beat-grid snapping):
+[docs/experimentos-precisao.md](docs/experimentos-precisao.md) (in Portuguese).
 
-1. **Letra:** `lyrics.txt` na pasta da música (se existir) ou o LRCLIB (busca por artista/título/duração).
-2. **Voz:** usa o stem de voz da música, se houver; senão separa do mix com o **MelBand RoFormer**
-   (plano B: **htdemucs**).
-3. **Alinhamento:** **wav2vec2-large-960h** linha a linha, ancorado nos tempos do LRC. Nas músicas em inglês,
-   o **ALT-DSing** (treinado com canto) dá uma 2ª opinião: onde os dois discordam mais de 0,5 s no início da
-   linha, fica o que está mais perto do tempo do LRCLIB.
-4. **Qualidade:** cada linha recebe um nível de suspeita (0–2) e a música sai como `ok` ou `REVISAR`;
-   músicas sem voz no áudio são detectadas como instrumentais.
-5. **Saída:** `notes.autolyrics.*` ao lado do original. **Aplicar** troca o chart (o original vira `notes.*.bak`);
-   **Restaurar** desfaz.
+## Installation
 
-Resultados, metodologia e o que foi testado (Whisper, ALT-DALI, consenso, grade rítmica):
-[docs/experimentos-precisao.md](docs/experimentos-precisao.md).
+Requirements: **Python 3.12**, **ffmpeg** on your PATH and, ideally, a GPU (CPU works but is much slower).
 
-## Instalação
-
-Pré-requisitos: **Python 3.12**, **ffmpeg** no PATH e, de preferência, uma GPU (CPU funciona, mas é bem mais lento).
-
-### CPU ou NVIDIA
+### CPU or NVIDIA
 
 ```powershell
 py -3.12 -m venv .venv
 .\.venv\Scripts\python -m pip install torch==2.9.1 torchaudio==2.9.1 --index-url https://download.pytorch.org/whl/cu128   # NVIDIA
-# ou, só CPU:  .\.venv\Scripts\python -m pip install torch==2.9.1 torchaudio==2.9.1
+# or, CPU only:  .\.venv\Scripts\python -m pip install torch==2.9.1 torchaudio==2.9.1
 .\.venv\Scripts\python -m pip install -r requirements.txt
 ```
 
-O torch/torchaudio ficam fixos na 2.9: versões mais novas do torchaudio removem o `forced_align` e as
-pipelines que o alinhamento usa.
+torch/torchaudio are pinned to 2.9: newer torchaudio releases remove `forced_align` and the pipelines the
+alignment relies on.
 
-### AMD no Windows (ROCm 7.2.1, RX 7000/9000)
+### AMD on Windows (ROCm 7.2.1, RX 7000/9000)
 
 ```powershell
 py -3.12 -m venv .venv-rocm
@@ -59,85 +54,91 @@ $u = 'https://repo.radeon.com/rocm/windows/rocm-rel-7.2.1'
 .\.venv-rocm\Scripts\python -m pip install --no-deps -r requirements-rocm.txt
 ```
 
-`--no-deps` impede o pip de trocar o PyTorch da AMD por outro; `requirements-rocm.txt` tem as versões exatas
-de um ambiente que funciona.
+`--no-deps` stops pip from replacing AMD's PyTorch with a different build; `requirements-rocm.txt` pins the
+exact versions of a known-working environment.
 
-Os modelos são baixados na primeira execução para `cache\models\` (≈2,5 GB). O ALT-DSing (2ª opinião em inglês)
-é opcional: `python tools\get_alt_models.py` baixa os pesos do Google Drive dos autores (precisa de
-`requirements-experimentos.txt`). Sem ele, o alinhamento usa só o wav2vec2.
+Models are downloaded on first run into `cache\models\` (≈2.5 GB). ALT-DSing (the second opinion for English)
+is optional: `python tools\get_alt_models.py` downloads the weights from the authors' Google Drive (requires
+`requirements-experimentos.txt`). Without it, alignment uses wav2vec2 only.
 
-## Interface
+## Web UI
 
-Dois cliques em `yarg-lyrics-ui.bat`: abre `http://127.0.0.1:8765` no navegador.
+Double-click `yarg-lyrics-ui.bat`: it opens `http://127.0.0.1:8765` in your browser.
 
-- **Procurar…** escolhe a pasta da setlist; a lista mostra o status de cada música (já tem letra, pendente,
-  ok, revisar, sem letra, instrumental, aplicada).
-- Selecione músicas e clique **Gerar letras**: a fila separa as vozes e depois alinha, na GPU.
-- Clique numa música para revisar: toca a música (ou só a voz) com a letra acendendo palavra por palavra.
-  **Próxima suspeita** (N) pula para as linhas marcadas; **Ajustar tempo** move linha, trecho ou palavra
-  (ou "aqui", no ponto em que o áudio está).
-- **Marcar como ok**, **Aplicar**, **Restaurar original**, **Editar letra e ressincronizar** (salva um
-  `lyrics.txt`, que passa a ter prioridade sobre o LRCLIB) e **Não tem letra** (cria `.nolyrics`).
-- **Outras versões:** copia a letra de uma versão com o mesmo áudio (ex.: co-op), com ajuste de defasagem.
+The UI is in Portuguese; button names below are given as they appear, with a translation.
 
-A interface só aceita conexões do próprio computador (127.0.0.1) — ela grava arquivos nas pastas indicadas.
+- **Procurar…** (Browse) picks a setlist folder; the list shows each song's status (has lyrics, pending, ok,
+  needs review, no lyrics found, instrumental, applied).
+- Select songs and click **Gerar letras** (Generate lyrics): the queue separates the vocals first and then
+  aligns, on the GPU.
+- Click a song to review it: plays the song (or just the vocals) with the lyrics lighting up word by word.
+  **Próxima suspeita** (Next suspect, key N) jumps to flagged lines; **Ajustar tempo** (Adjust timing) shifts
+  a line, a section or a word, or snaps it to the current playback position.
+- **Marcar como ok** (Mark as ok), **Aplicar** (Apply), **Restaurar original** (Restore original),
+  **Editar letra e ressincronizar** (Edit lyrics and resync — saves a `lyrics.txt`, which then takes priority
+  over LRCLIB) and **Não tem letra** (No lyrics — creates a `.nolyrics` file so the song is skipped).
+- **Outras versões** (Other versions): copies lyrics from another version with the same audio (e.g. a co-op
+  chart), with the time offset adjusted automatically.
 
-## Linha de comando
+The UI only accepts connections from your own computer (127.0.0.1), since it writes files into the folders you
+point it at.
+
+## Command line
 
 ```powershell
 $py = '.\.venv-rocm\Scripts\python.exe'
-& $py run.py --scan "<pasta da setlist>"            # gera notes.autolyrics.* (não mexe no original)
-& $py run.py --scan "<pasta da setlist>" --apply    # aplica as que saíram "ok"
-& $py run.py --restore --scan "<pasta da setlist>"  # volta os originais
-& $py run.py --eval "<pasta que já tem letra>"      # mede a precisão contra a letra existente
-& $py tools\batch_folders.py "<raiz da biblioteca>" # todas as setlists, uma por vez, pela fila da interface
-& $py tools\midi_scan.py "<raiz da biblioteca>"     # procura .mid com trilhas corrompidas (--consertar)
+& $py run.py --scan "<setlist folder>"              # writes notes.autolyrics.* (original untouched)
+& $py run.py --scan "<setlist folder>" --apply      # applies the songs marked "ok"
+& $py run.py --restore --scan "<setlist folder>"    # restores the originals
+& $py run.py --eval "<folder that already has lyrics>"  # measures accuracy against the existing lyrics
+& $py tools\batch_folders.py "<library root>"       # every setlist, one at a time, through the UI queue
+& $py tools\midi_scan.py "<library root>"           # finds .mid files with corrupted tracks (--consertar fixes them)
 ```
 
-Relatórios em `reports\` (`.jsonl` + `.csv`). Se uma música não estiver no LRCLIB, coloque a letra num
-`lyrics.txt` na pasta dela (uma linha por verso; aceita LRC com tempos).
+Reports go to `reports\` (`.jsonl` + `.csv`). If a song isn't on LRCLIB, put its lyrics in a `lyrics.txt` in the
+song folder (one line per verse; LRC with timestamps also works).
 
-## Configuração (variáveis de ambiente)
+## Configuration (environment variables)
 
-| Variável | Efeito |
+| Variable | Effect |
 |---|---|
-| `YL_ALIGNER` | `w2v-960h` (padrão), `mms`, `alt-dsing`, `alt-dali`. Com valor explícito roda um modelo só. |
-| `YL_SECOND` | `0` desliga a 2ª opinião; `1` força mesmo com `YL_ALIGNER` explícito. |
-| `YL_SEPARATOR` | `vocals_mel_band_roformer.ckpt` (padrão), `htdemucs`, outro modelo do audio-separator, ou `none`. |
-| `YL_DEVICE` | `cpu` ou `cuda` (padrão: GPU se existir). |
-| `YL_IGNORE_VOCAL_STEM` | `1` ignora o stem de voz e separa do mix (usado nas avaliações). |
-| `YL_VERBOSE` | `1` mostra os avisos das bibliotecas que normalmente ficam ocultos. |
+| `YL_ALIGNER` | `w2v-960h` (default), `mms`, `alt-dsing`, `alt-dali`. An explicit value runs that single model. |
+| `YL_SECOND` | `0` disables the second opinion; `1` forces it even with an explicit `YL_ALIGNER`. |
+| `YL_SEPARATOR` | `vocals_mel_band_roformer.ckpt` (default), `htdemucs`, any other audio-separator model, or `none`. |
+| `YL_DEVICE` | `cpu` or `cuda` (default: GPU if available). |
+| `YL_IGNORE_VOCAL_STEM` | `1` ignores the vocal stem and separates from the mix (used in evaluations). |
+| `YL_VERBOSE` | `1` shows library warnings that are normally hidden. |
 
-## Avaliação
+## Evaluation
 
-As ferramentas em `tools/` (`exp_*.py`, `flag_check.py`, `sep_compare.ps1`…) medem a precisão contra músicas que
-já têm letra oficial. Elas leem uma lista de pastas (`gold_all.json`, `gold_holdout.json`) que fica só no seu PC;
-o formato está em `gold.example.json`, e `tools\gold_candidates.py` encontra candidatas na sua biblioteca.
+The tools in `tools/` (`exp_*.py`, `flag_check.py`, `sep_compare.ps1`, …) measure accuracy against songs that
+already have official lyrics. They read a list of folders (`gold_all.json`, `gold_holdout.json`) that stays on
+your machine; see `gold.example.json` for the format, and `tools\gold_candidates.py` finds candidates in your library.
 
-## Modelos e licenças
+## Models and licenses
 
-O código deste repositório é MIT. Os modelos são baixados de suas fontes e têm licenças próprias:
+This repository's code is MIT-licensed. Models are downloaded from their sources and have their own licenses:
 
-| Modelo | Uso | Fonte | Licença |
+| Model | Used for | Source | License |
 |---|---|---|---|
-| MelBand RoFormer (Kimberley Jensen) | separação de voz | [Hugging Face](https://huggingface.co/KimberleyJSN/melbandroformer), via [audio-separator](https://github.com/nomadkaraoke/python-audio-separator) | MIT |
-| htdemucs | separação (plano B) | [Demucs](https://github.com/facebookresearch/demucs) | MIT |
-| wav2vec2-large-960h-lv60-self | alinhamento | [facebook/wav2vec2-large-960h-lv60-self](https://huggingface.co/facebook/wav2vec2-large-960h-lv60-self) | Apache-2.0 |
-| ALT-DSing / ALT-DALI | 2ª opinião (inglês) / experimento | [ALT_SpeechBrain](https://github.com/guxm2021/ALT_SpeechBrain) (Ou, Gu & Wang, ISMIR 2022) | código Apache-2.0; pesos sem licença declarada |
-| MMS_FA (`YL_ALIGNER=mms`) | alinhador antigo | [torchaudio](https://docs.pytorch.org/audio/stable/generated/torchaudio.pipelines.MMS_FA.html) | CC-BY-NC 4.0 (uso não comercial) |
-| Whisper (só experimentos) | comparação | [openai-whisper](https://github.com/openai/whisper) / [stable-ts](https://github.com/jianfch/stable-ts) | MIT |
+| MelBand RoFormer (Kimberley Jensen) | vocal separation | [Hugging Face](https://huggingface.co/KimberleyJSN/melbandroformer), via [audio-separator](https://github.com/nomadkaraoke/python-audio-separator) | MIT |
+| htdemucs | separation (fallback) | [Demucs](https://github.com/facebookresearch/demucs) | MIT |
+| wav2vec2-large-960h-lv60-self | alignment | [facebook/wav2vec2-large-960h-lv60-self](https://huggingface.co/facebook/wav2vec2-large-960h-lv60-self) | Apache-2.0 |
+| ALT-DSing / ALT-DALI | second opinion (English) / experiment | [ALT_SpeechBrain](https://github.com/guxm2021/ALT_SpeechBrain) (Ou, Gu & Wang, ISMIR 2022) | code Apache-2.0; no license stated for the weights |
+| MMS_FA (`YL_ALIGNER=mms`) | previous aligner | [torchaudio](https://docs.pytorch.org/audio/stable/generated/torchaudio.pipelines.MMS_FA.html) | CC-BY-NC 4.0 (non-commercial) |
+| Whisper (experiments only) | comparison | [openai-whisper](https://github.com/openai/whisper) / [stable-ts](https://github.com/jianfch/stable-ts) | MIT |
 
-Letras: vêm do [LRCLIB](https://lrclib.net) e pertencem a seus autores. A ferramenta só as grava nos seus arquivos
-locais; nenhuma letra faz parte deste repositório.
+Lyrics come from [LRCLIB](https://lrclib.net) and belong to their authors. The tool only writes them into your
+local files; no lyrics are part of this repository.
 
-## Limitações
+## Limitations
 
-- Feito e testado no Windows com GPU AMD. Partes da interface (seletor de pasta) e alguns scripts (`.ps1`,
-  reinício do servidor no `batch_folders.py`) são específicos do Windows.
-- Depende do `forced_align` do torchaudio, que está marcado como obsoleto: por isso o torch/torchaudio
-  ficam fixos na 2.9.
-- Português: só 6 músicas com letra oficial na avaliação — funciona bem nelas, mas a amostra é pequena.
+- Built and tested on Windows with an AMD GPU. Parts of the UI (the folder picker) and some scripts (`.ps1`,
+  the server restart in `batch_folders.py`) are Windows-specific.
+- Relies on torchaudio's `forced_align`, which is deprecated: that's why torch/torchaudio are pinned to 2.9.
+- Portuguese: only 6 songs with official lyrics in the evaluation set. It works well on them, but the sample is small.
+- The UI, code comments and the experiment write-up are in Portuguese.
 
-## Licença
+## License
 
 [MIT](LICENSE)
