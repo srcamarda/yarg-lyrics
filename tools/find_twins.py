@@ -1,6 +1,6 @@
 """Varre a biblioteca, agrupa versões pelo nome e compara o áudio de cada par. Grava reports/twins.json.
 
-Uso: python tools\\find_twins.py "D:\\Jogos\\Setlists"
+Uso: python tools\\find_twins.py "<raiz da biblioteca>"
 Imprime só nomes de músicas e números.
 """
 import sys, os, json, itertools, collections, time

@@ -1,0 +1,7 @@
+# Só para as ferramentas de experimento em tools/ (comparação com Whisper, download dos modelos ALT). Não é necessário para usar.
+# AMD/ROCm: instale com --no-deps para não trocar o torch.
+stable-ts==2.19.1
+openai-whisper==20250625
+tiktoken
+more-itertools
+gdown

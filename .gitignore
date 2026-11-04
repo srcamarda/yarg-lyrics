@@ -1,14 +1,18 @@
+# ambientes Python
 .venv/
-cache/
-*.log
-*.err
-last_report.json
-reports/
+.venv-rocm/
 __pycache__/
 
-.venv-rocm/
+# cache (vozes separadas, modelos baixados, letras do LRCLIB), relatórios e estado da interface
+cache/
+reports/
+logs/
 ui_state.json
 ui_state.json.tmp
-ui.log
-ui.err
-logs/
+last_report.json
+*.log
+*.err
+
+# listas de músicas de referência (caminhos da sua biblioteca): ficam só no seu PC
+# formato em gold.example.json
+gold_*.json

@@ -3,7 +3,7 @@ import re, json, os, time, unicodedata
 import requests
 
 API = 'https://lrclib.net/api'
-UA = {'User-Agent': 'yarg-lyrics/0.2 (https://github.com/)'}
+UA = {'User-Agent': 'yarg-lyrics/0.3 (https://github.com/srcamarda/yarg-lyrics)'}
 
 def read_text(path):
     """Lê lyrics.txt em UTF-8 (com/sem BOM); cai p/ cp1252 (Bloco de Notas antigo) se não for UTF-8."""
